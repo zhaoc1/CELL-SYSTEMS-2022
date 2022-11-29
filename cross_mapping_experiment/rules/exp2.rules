@@ -1,0 +1,95 @@
+## Experiment 2: mngs reads paired filters to show only close species in the reads matter
+
+
+import pysam
+import numpy as np
+
+
+rule exp2_snps_nofilter:
+  input:
+    r1 = f"{PROJ_DIR}/2_reads/mngs/{{bt2_combo}}/cov_{{sim_cov}}_1.fastq.gz",
+    r2 = f"{PROJ_DIR}/2_reads/mngs/{{bt2_combo}}/cov_{{sim_cov}}_2.fastq.gz",
+
+    species = f"{PROJ_DIR}/1_dbs/{{bt2_combo}}/repgenomes.species",
+    db = f"{PROJ_DIR}/1_dbs/{{bt2_combo}}/repgenomes.rev.1.bt2",
+    truesites = f"{PROJ_DIR}/4_truesites/sim_rep_true_sites.tsv",
+  output:
+    snps = f"{PROJ_DIR}/5_exp2/nofilter/{{bt2_combo}}/cov_{{sim_cov}}X/snps/snps_summary.tsv",
+    bam = f"{PROJ_DIR}/5_exp2/nofilter/{{bt2_combo}}/cov_{{sim_cov}}X/temp/snps/repgenomes.bam",
+    pileup = f"{PROJ_DIR}/5_exp2/nofilter/{{bt2_combo}}/cov_{{sim_cov}}X/snps/{ON_TARGET_SPECIES}.snps.tsv.lz4",
+    summary = f"{PROJ_DIR}/6_rtemp/exp2/nofilter/{{bt2_combo}}/summary_cov_{{sim_cov}}X.tsv",
+    major_allele = f"{PROJ_DIR}/6_rtemp/exp2/nofilter/{{bt2_combo}}/major_alleles_cov_{{sim_cov}}X.tsv.lz4",
+  params:
+    sample_name = f"cov_{{sim_cov}}X",
+    dbdir = f"{PROJ_DIR}/1_dbs/{{bt2_combo}}",
+    out = f"{PROJ_DIR}/5_exp2/nofilter/{{bt2_combo}}",
+    py = LIB_DIR + "/bin/summarize_sites.py",
+  threads:
+    8
+  shell:
+    """
+    python3 -m iggtools midas_run_snps --sample {params.sample_name} \
+        -1 {input.r1} -2 {input.r2} --midasdb_name uhgg --midasdb_dir {params.dbdir} \
+        --prebuilt_bowtie2_indexes {params.dbdir}/repgenomes \
+        --prebuilt_bowtie2_species {input.species} \
+        --advanced --analysis_ready --fragment_length 1000 --select_threshold=-1 \
+        --num_cores {threads} {params.out}
+
+    python {params.py} --truesites_fp {input.truesites} --pileup_fp {output.pileup} --summary_fp {output.summary}  --out_fp {output.major_allele}
+    """
+
+
+rule exp2_snps_paired:
+  input:
+    r1 = f"{PROJ_DIR}/2_reads/mngs/{{bt2_combo}}/cov_{{sim_cov}}_1.fastq.gz",
+    r2 = f"{PROJ_DIR}/2_reads/mngs/{{bt2_combo}}/cov_{{sim_cov}}_2.fastq.gz",
+    bam = f"{PROJ_DIR}/5_exp2/nofilter/{{bt2_combo}}/cov_{{sim_cov}}X/temp/snps/repgenomes.bam",
+
+    species = f"{PROJ_DIR}/1_dbs/{{bt2_combo}}/repgenomes.species",
+    db = f"{PROJ_DIR}/1_dbs/{{bt2_combo}}/repgenomes.rev.1.bt2",
+    truesites = f"{PROJ_DIR}/4_truesites/sim_rep_true_sites.tsv",
+  output:
+    snps = f"{PROJ_DIR}/5_exp2/paired/{{bt2_combo}}/cov_{{sim_cov}}X/snps/snps_summary.tsv",
+    bam = f"{PROJ_DIR}/5_exp2/paired/{{bt2_combo}}/cov_{{sim_cov}}X/temp/snps/repgenomes.bam",
+    pileup = f"{PROJ_DIR}/5_exp2/paired/{{bt2_combo}}/cov_{{sim_cov}}X/snps/{ON_TARGET_SPECIES}.snps.tsv.lz4",
+    summary = f"{PROJ_DIR}/6_rtemp/exp2/paired/{{bt2_combo}}/summary_cov_{{sim_cov}}X.tsv",
+    major_allele = f"{PROJ_DIR}/6_rtemp/exp2/paired/{{bt2_combo}}/major_alleles_cov_{{sim_cov}}X.tsv.lz4",
+  params:
+    sample_name = f"cov_{{sim_cov}}X",
+    dbdir = f"{PROJ_DIR}/1_dbs/{{bt2_combo}}",
+    bamdir = f"{PROJ_DIR}/5_exp2/paired/{{bt2_combo}}/cov_{{sim_cov}}X/temp/snps",
+    out = f"{PROJ_DIR}/5_exp2/paired/{{bt2_combo}}",
+    py = LIB_DIR + "/bin/summarize_sites.py",
+  threads:
+    8
+  shell:
+    """
+    mkdir -p {params.bamdir}
+    cp {input.bam} {params.bamdir}
+
+    python3 -m iggtools midas_run_snps --sample {params.sample_name} \
+        -1 {input.r1} -2 {input.r2} --midasdb_name uhgg --midasdb_dir {params.dbdir} \
+        --prebuilt_bowtie2_indexes {params.dbdir}/repgenomes \
+        --prebuilt_bowtie2_species {input.species} \
+        --advanced --paired_only --fragment_length 1000 --select_threshold=-1 \
+        --num_cores {threads} --debug {params.out}
+
+    python {params.py} --truesites_fp {input.truesites} --pileup_fp {output.pileup} --summary_fp {output.summary}  --out_fp {output.major_allele}
+    """
+
+
+rule merge_stats_exp2:
+  input:
+    expand(f"{PROJ_DIR}/6_rtemp/exp2/{{ft}}/{{bt2_combo}}/summary_cov_{{sim_cov}}X.tsv",
+    sim_cov=SIM_COV_LIST, bt2_combo = BT2_BINS_W_CON, ft=["nofilter", "paired"])
+  output:
+    sites = f"{PROJ_DIR}/7_rdata/exp2_sites_summary.tsv",
+    reads = f"{PROJ_DIR}/7_rdata/exp2_reads_summary.tsv"
+  params:
+    R = LIB_DIR + "/bin/merge_exp2.R",
+  threads:
+    2
+  shell:
+    """
+    Rscript {params.R} {PROJ_DIR} {output.sites} {output.reads}
+    """

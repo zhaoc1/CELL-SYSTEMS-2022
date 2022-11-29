@@ -1,0 +1,63 @@
+## Run this after MIDAS species's flow
+import pysam
+import numpy as np
+
+
+rule midas_download_db:
+  input:
+    species_ids = f"{PROJ_DIR}/1_dbs/{{bt2_combo}}/species_ids",
+  output:
+    f"{PROJ_DIR}/1_dbs/{{bt2_combo}}/markers_models/phyeco/marker_genes.mapping_cutoffs"
+  params:
+    midas_dbdir = f"{PROJ_DIR}/1_dbs/{{bt2_combo}}"
+  threads:
+    2
+  shell:
+    """
+    python -m iggtools download_midasdb --midas_db {params.midas_dbdir} \
+      --species_file {input.species_ids} --num_cores {threads}
+    """
+
+
+rule midas_run_species_sim:
+  input:
+    o_r1 = f"{PROJ_DIR}/2_reads/sim/cov_{{sim_cov}}_1.fastq.gz",
+    o_r2 = f"{PROJ_DIR}/2_reads/sim/cov_{{sim_cov}}_2.fastq.gz",
+
+    db = f"{PROJ_DIR}/1_dbs/{{bt2_combo}}/markers_models/phyeco/marker_genes.mapping_cutoffs"
+  output:
+    f"{PROJ_DIR}/3_midas/paired/sim/{{bt2_combo}}/cov_{{sim_cov}}X/species/species_profile.tsv",
+  threads:
+    4
+  params:
+    sample_name = f"cov_{{sim_cov}}X",
+    dbdir = f"{PROJ_DIR}/1_dbs/{{bt2_combo}}",
+    out2 = f"{PROJ_DIR}/3_midas/paired/sim/{{bt2_combo}}",
+  shell:
+    """
+    python -m iggtools midas_run_species \
+        --sample_name {params.sample_name} -1 {input.o_r1} -2 {input.o_r2} --midas_db {params.dbdir} \
+        --num_cores {threads} {params.out2}
+    """
+
+
+rule midas_run_species_mngs:
+  input:
+    m_r1 = f"{PROJ_DIR}/2_reads/mngs/{{bt2_combo}}/cov_{{sim_cov}}_1.fastq.gz",
+    m_r2 = f"{PROJ_DIR}/2_reads/mngs/{{bt2_combo}}/cov_{{sim_cov}}_2.fastq.gz",
+
+    db = f"{PROJ_DIR}/1_dbs/{{bt2_combo}}/markers_models/phyeco/marker_genes.mapping_cutoffs"
+  output:
+    f"{PROJ_DIR}/3_midas/paired/mngs/{{bt2_combo}}/cov_{{sim_cov}}X/species/species_profile.tsv",
+  threads:
+    4
+  params:
+    sample_name = f"cov_{{sim_cov}}X",
+    dbdir = f"{PROJ_DIR}/1_dbs/{{bt2_combo}}",
+    out3 = f"{PROJ_DIR}/3_midas/paired/mngs/{{bt2_combo}}",
+  shell:
+    """
+    python -m iggtools midas_run_species \
+        --sample_name {params.sample_name} -1 {input.m_r1} -2 {input.m_r2} --midas_db {params.dbdir} \
+        --num_cores {threads} {params.out3}
+    """

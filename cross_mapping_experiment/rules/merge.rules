@@ -1,0 +1,37 @@
+
+rule midas_merge_snps_xcov:
+  input:
+    samples_list1 = f"{PROJ_DIR}/8_merge/exp1/nofilter/{{bt2_combo}}/samples_list.tsv",
+    samples_list2 = f"{PROJ_DIR}/8_merge/exp1/single/{{bt2_combo}}/samples_list.tsv",
+    samples_list3 = f"{PROJ_DIR}/8_merge/exp1/paired/{{bt2_combo}}/samples_list.tsv",
+  output:
+    f"{PROJ_DIR}/8_merge/exp1/nofilter/{{bt2_combo}}/snps/snps_summary.tsv",
+    f"{PROJ_DIR}/8_merge/exp1/single/{{bt2_combo}}/snps/snps_summary.tsv",
+    f"{PROJ_DIR}/8_merge/exp1/paired/{{bt2_combo}}/snps/snps_summary.tsv",
+  params:
+    dbdir = f"{PROJ_DIR}/1_dbs/{{bt2_combo}}",
+    outdir1 = f"{PROJ_DIR}/8_merge/exp1/nofilter/{{bt2_combo}}",
+    outdir2 = f"{PROJ_DIR}/8_merge/exp1/single/{{bt2_combo}}",
+    outdir3 = f"{PROJ_DIR}/8_merge/exp1/paired/{{bt2_combo}}",
+  threads:
+    8
+  shell:
+    """
+    python -m iggtools midas_merge_snps --samples_list {input.samples_list1} --num_cores {threads} \
+      --midasdb_name uhgg --midasdb_dir {params.dbdir} \
+      --genome_depth 0.00001 --genome_coverage 0.00001 --snp_maf 0.1 --advanced \
+      --snp_pooled_method prevalence --snp_type any \
+      --site_depth 2 --site_ratio 100 --site_prev 0 {params.outdir1}
+
+    python -m iggtools midas_merge_snps --samples_list {input.samples_list2} --num_cores {threads} \
+      --midasdb_name uhgg --midasdb_dir {params.dbdir} \
+      --genome_depth 0.000001 --genome_coverage 0.00001 --snp_maf 0.1 --advanced \
+      --snp_pooled_method prevalence --snp_type any \
+      --site_depth 2 --site_ratio 100 --site_prev 0 {params.outdir2}
+
+    python -m iggtools midas_merge_snps --samples_list {input.samples_list3} --num_cores {threads} \
+      --midasdb_name uhgg --midasdb_dir {params.dbdir} \
+      --genome_depth 0.000001 --genome_coverage 0.000001 --snp_maf 0.1 --advanced \
+      --snp_pooled_method prevalence --snp_type any \
+      --site_depth 2 --site_ratio 100 --site_prev 0 {params.outdir3}
+    """

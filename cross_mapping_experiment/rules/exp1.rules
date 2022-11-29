@@ -1,0 +1,184 @@
+## Experiment 1: sim reads to three filter options.
+
+
+import pysam
+import numpy as np
+
+
+rule exp1_snps_nofilter:
+  input:
+    species = f"{PROJ_DIR}/1_dbs/{{bt2_combo}}/repgenomes.species",
+    db = f"{PROJ_DIR}/1_dbs/{{bt2_combo}}/repgenomes.rev.1.bt2",
+
+    r1 = f"{PROJ_DIR}/2_reads/sim/cov_{{sim_cov}}_1.fastq.gz",
+    r2 = f"{PROJ_DIR}/2_reads/sim/cov_{{sim_cov}}_2.fastq.gz",
+
+    truesites = f"{PROJ_DIR}/4_truesites/sim_rep_true_sites.tsv",
+  output:
+    snps = f"{PROJ_DIR}/5_exp1/nofilter/{{bt2_combo}}/cov_{{sim_cov}}X/snps/snps_summary.tsv",
+    bam = f"{PROJ_DIR}/5_exp1/nofilter/{{bt2_combo}}/cov_{{sim_cov}}X/temp/snps/repgenomes.bam",
+    pileup = f"{PROJ_DIR}/5_exp1/nofilter/{{bt2_combo}}/cov_{{sim_cov}}X/snps/{ON_TARGET_SPECIES}.snps.tsv.lz4",
+
+    summary = f"{PROJ_DIR}/6_rtemp/exp1/nofilter/{{bt2_combo}}/summary_cov_{{sim_cov}}X.tsv",
+    major_allele = f"{PROJ_DIR}/6_rtemp/exp1/nofilter/{{bt2_combo}}/major_alleles_cov_{{sim_cov}}X.tsv.lz4",
+  params:
+    sample_name = f"cov_{{sim_cov}}X",
+    dbdir = f"{PROJ_DIR}/1_dbs/{{bt2_combo}}",
+    out = f"{PROJ_DIR}/5_exp1/nofilter/{{bt2_combo}}",
+    py = LIB_DIR + "/bin/summarize_sites.py",
+  threads:
+    8
+  shell:
+    """
+    python3 -m iggtools midas_run_snps --sample_name {params.sample_name} \
+        -1 {input.r1} -2 {input.r2} --midasdb_name uhgg --midasdb_dir {params.dbdir} \
+        --prebuilt_bowtie2_indexes {params.dbdir}/repgenomes \
+        --prebuilt_bowtie2_species {input.species} \
+        --advanced --analysis_ready --fragment_length 1000 --select_threshold=-1 \
+        --num_cores {threads} {params.out}
+
+    python {params.py} --truesites_fp {input.truesites} --pileup_fp {output.pileup} --summary_fp {output.summary}  --out_fp {output.major_allele}
+    """
+
+
+rule exp1_snps_single:
+  input:
+    species = f"{PROJ_DIR}/1_dbs/{{bt2_combo}}/repgenomes.species",
+    db = f"{PROJ_DIR}/1_dbs/{{bt2_combo}}/repgenomes.rev.1.bt2",
+    bam = f"{PROJ_DIR}/5_exp1/nofilter/{{bt2_combo}}/cov_{{sim_cov}}X/temp/snps/repgenomes.bam",
+
+    r1 = f"{PROJ_DIR}/2_reads/sim/cov_{{sim_cov}}_1.fastq.gz",
+    r2 = f"{PROJ_DIR}/2_reads/sim/cov_{{sim_cov}}_2.fastq.gz",
+    truesites = f"{PROJ_DIR}/4_truesites/sim_rep_true_sites.tsv",
+  output:
+    snps = f"{PROJ_DIR}/5_exp1/single/{{bt2_combo}}/cov_{{sim_cov}}X/snps/snps_summary.tsv",
+    bam = f"{PROJ_DIR}/5_exp1/single/{{bt2_combo}}/cov_{{sim_cov}}X/temp/snps/repgenomes.bam",
+    pileup = f"{PROJ_DIR}/5_exp1/single/{{bt2_combo}}/cov_{{sim_cov}}X/snps/{ON_TARGET_SPECIES}.snps.tsv.lz4",
+
+    summary = f"{PROJ_DIR}/6_rtemp/exp1/single/{{bt2_combo}}/summary_cov_{{sim_cov}}X.tsv",
+    major_allele = f"{PROJ_DIR}/6_rtemp/exp1/single/{{bt2_combo}}/major_alleles_cov_{{sim_cov}}X.tsv.lz4",
+  params:
+    sample_name = f"cov_{{sim_cov}}X",
+    dbdir = f"{PROJ_DIR}/1_dbs/{{bt2_combo}}",
+    bamdir = f"{PROJ_DIR}/5_exp1/single/{{bt2_combo}}/cov_{{sim_cov}}X/temp/snps",
+    out = f"{PROJ_DIR}/5_exp1/single/{{bt2_combo}}",
+    py = LIB_DIR + "/bin/summarize_sites.py",
+  threads:
+    8
+  shell:
+    """
+    mkdir -p {params.bamdir}
+    cp {input.bam} {params.bamdir}
+
+    python3 -m iggtools midas_run_snps --sample_name {params.sample_name} \
+        -1 {input.r1} -2 {input.r2} --midasdb_name uhgg --midasdb_dir {params.dbdir} \
+        --prebuilt_bowtie2_indexes {params.dbdir}/repgenomes \
+        --prebuilt_bowtie2_species {input.species} \
+        --advanced --fragment_length 1000 --select_threshold=-1 \
+        --num_cores {threads} --debug {params.out}
+
+    python {params.py} --truesites_fp {input.truesites} --pileup_fp {output.pileup} --summary_fp {output.summary}  --out_fp {output.major_allele}
+    """
+
+
+rule exp1_snps_paired:
+  input:
+    species = f"{PROJ_DIR}/1_dbs/{{bt2_combo}}/repgenomes.species",
+    db = f"{PROJ_DIR}/1_dbs/{{bt2_combo}}/repgenomes.rev.1.bt2",
+    bam = f"{PROJ_DIR}/5_exp1/nofilter/{{bt2_combo}}/cov_{{sim_cov}}X/temp/snps/repgenomes.bam",
+
+    r1 = f"{PROJ_DIR}/2_reads/sim/cov_{{sim_cov}}_1.fastq.gz",
+    r2 = f"{PROJ_DIR}/2_reads/sim/cov_{{sim_cov}}_2.fastq.gz",
+    truesites = f"{PROJ_DIR}/4_truesites/sim_rep_true_sites.tsv",
+  output:
+    snps = f"{PROJ_DIR}/5_exp1/paired/{{bt2_combo}}/cov_{{sim_cov}}X/snps/snps_summary.tsv",
+    bam = f"{PROJ_DIR}/5_exp1/paired/{{bt2_combo}}/cov_{{sim_cov}}X/temp/snps/repgenomes.bam",
+    pileup = f"{PROJ_DIR}/5_exp1/paired/{{bt2_combo}}/cov_{{sim_cov}}X/snps/{ON_TARGET_SPECIES}.snps.tsv.lz4",
+
+    summary = f"{PROJ_DIR}/6_rtemp/exp1/paired/{{bt2_combo}}/summary_cov_{{sim_cov}}X.tsv",
+    major_allele = f"{PROJ_DIR}/6_rtemp/exp1/paired/{{bt2_combo}}/major_alleles_cov_{{sim_cov}}X.tsv.lz4",
+  params:
+    sample_name = f"cov_{{sim_cov}}X",
+    dbdir = f"{PROJ_DIR}/1_dbs/{{bt2_combo}}",
+    bamdir = f"{PROJ_DIR}/5_exp1/paired/{{bt2_combo}}/cov_{{sim_cov}}X/temp/snps",
+    out = f"{PROJ_DIR}/5_exp1/paired/{{bt2_combo}}",
+    py = LIB_DIR + "/bin/summarize_sites.py",
+  threads:
+    8
+  shell:
+    """
+    mkdir -p {params.bamdir}
+    cp {input.bam} {params.bamdir}
+
+    python3 -m iggtools midas_run_snps --sample {params.sample_name} \
+        -1 {input.r1} -2 {input.r2} --midasdb_name uhgg --midasdb_dir {params.dbdir} \
+        --prebuilt_bowtie2_indexes {params.dbdir}/repgenomes \
+        --prebuilt_bowtie2_species {input.species} \
+        --advanced  --paired_only --fragment_length 1000 --select_threshold=-1 \
+        --num_cores {threads} --debug {params.out}
+
+    python {params.py} --truesites_fp {input.truesites} --pileup_fp {output.pileup} --summary_fp {output.summary}  --out_fp {output.major_allele}
+    """
+
+
+rule merge_stats_exp1:
+  input:
+    expand(f"{PROJ_DIR}/6_rtemp/exp1/{{ft}}/{{bt2_combo}}/summary_cov_{{sim_cov}}X.tsv", sim_cov=SIM_COV_LIST, bt2_combo = BT2_COMBO, ft=FILTER_TYPES)
+  output:
+    sites = f"{PROJ_DIR}/7_rdata/exp1_sites_summary.tsv",
+    reads = f"{PROJ_DIR}/7_rdata/exp1_reads_summary.tsv"
+  params:
+    R = LIB_DIR + "/bin/merge_exp1.R",
+  threads:
+    2
+  shell:
+    """
+    Rscript {params.R} {PROJ_DIR} {output.sites} {output.reads}
+    """
+
+
+rule write_sample_lists:
+  input:
+    expand(PROJ_DIR + "/5_exp1/{ft}/{{bt2_combo}}/cov_{sim_cov}X/snps/snps_summary.tsv", sim_cov=SIM_COV_LIST, ft = FILTER_TYPES, allow_missing=True) # ani.100
+  output:
+    samples_list1 = f"{PROJ_DIR}/8_merge/exp1/nofilter/{{bt2_combo}}/samples_list.tsv",
+    samples_list2 = f"{PROJ_DIR}/8_merge/exp1/single/{{bt2_combo}}/samples_list.tsv",
+    samples_list3 = f"{PROJ_DIR}/8_merge/exp1/paired/{{bt2_combo}}/samples_list.tsv",
+  params:
+    midas_outdir1 = f"{PROJ_DIR}/5_exp1/nofilter/{{bt2_combo}}",
+    midas_outdir2 = f"{PROJ_DIR}/5_exp1/single/{{bt2_combo}}",
+    midas_outdir3 = f"{PROJ_DIR}/5_exp1/paired/{{bt2_combo}}",
+  run:
+    with open(output.samples_list1, "w") as stream:
+      stream.write("sample_name\tmidas_outdir\n")
+      for sim_cov in SIM_COV_LIST:
+          sample_name = f"cov_{sim_cov}X" #{wildcards.bt2_combo}
+          stream.write(f"{sample_name}\t{params.midas_outdir1}\n")
+
+    with open(output.samples_list2, "w") as stream:
+      stream.write("sample_name\tmidas_outdir\n")
+      for sim_cov in SIM_COV_LIST:
+          sample_name = f"cov_{sim_cov}X"
+          stream.write(f"{sample_name}\t{params.midas_outdir2}\n")
+
+    with open(output.samples_list3, "w") as stream:
+      stream.write("sample_name\tmidas_outdir\n")
+      for sim_cov in SIM_COV_LIST:
+          sample_name = f"cov_{sim_cov}X"
+          stream.write(f"{sample_name}\t{params.midas_outdir3}\n")
+
+
+
+rule exp1_print_bamaln:
+  input:
+    f"{PROJ_DIR}/5_exp1/nofilter/{{bt2_combo}}/cov_{{sim_cov}}X/temp/snps/repgenomes.bam",
+  output:
+    f"{PROJ_DIR}/6_bamaln/exp1/{{bt2_combo}}/cov_{{sim_cov}}X.tsv",
+  threads:
+    1
+  run:
+    with open(output[0], "w") as ofile:
+      with pysam.AlignmentFile(input[0]) as infile:
+        for aln in infile:
+          row = print_aln_record(aln)
+          ofile.write("\t".join(map(format_data, row)) + "\n")

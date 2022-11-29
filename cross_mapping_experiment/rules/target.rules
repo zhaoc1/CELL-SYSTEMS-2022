@@ -1,0 +1,136 @@
+
+
+rule _coverage:
+  input:
+    expand(f"{PROJ_DIR}/2_reads/neighbors/{{bt2_combo}}/sim_rc.tsv", bt2_combo = BT2_COMBO),
+    expand(f"{PROJ_DIR}/2_reads/sim/sim_rc.tsv")
+
+
+rule _reads:
+  input:
+    expand(PROJ_DIR + "/2_reads/sim/cov_{sim_cov}_1.fastq.gz", sim_cov = SIM_COV_LIST, bt2_combo = BT2_COMBO),
+    expand(PROJ_DIR + "/2_reads/mngs/{bt2_combo}/cov_{sim_cov}_1.fastq.gz", sim_cov = SIM_COV_LIST, bt2_combo = BT2_BINS_W_CON),
+    expand(PROJ_DIR + "/2_reads/mngs/{bt2_combo}/cov_{sim_cov}_1.fastq.gz", sim_cov = SIM_COV_LIST, bt2_combo = BT2_BINS_W_CON)
+
+
+rule _bt2_dbs:
+  input:
+    expand(PROJ_DIR + "/1_dbs/{bt2_combo}/repgenomes.species", bt2_combo=BT2_COMBO),
+    expand(PROJ_DIR + "/1_dbs/{bt2_combo}/pangenomes.species", bt2_combo=BT2_COMBO)
+
+
+
+rule _true_sites:
+  input:
+    [PROJ_DIR + "/4_truesites/" + "sim_rep_true_sites.tsv",
+    PROJ_DIR + "/4_truesites/" + "con_rep_true_sites.tsv"]
+
+
+rule _batch1:
+  input:
+    expand(f"{PROJ_DIR}/8_merge/exp1/{{ft}}/{{bt2_combo}}/snps/snps_summary.tsv", bt2_combo = BT2_COMBO, ft = FILTER_TYPES),
+    [f"{PROJ_DIR}/7_rdata/exp1_sites_summary.tsv", f"{PROJ_DIR}/7_rdata/exp1_reads_summary.tsv"] + [f"{PROJ_DIR}/7_rdata/exp2_sites_summary.tsv", f"{PROJ_DIR}/7_rdata/exp2_reads_summary.tsv"]
+
+rule _merge1:
+  input:
+    expand(f"{PROJ_DIR}/8_merge/exp1/{{ft}}/{{bt2_combo}}/snps/snps_summary.tsv", bt2_combo = BT2_COMBO, ft = FILTER_TYPES)
+
+
+rule _exp1:
+  input:
+    [f"{PROJ_DIR}/7_rdata/exp1_sites_summary.tsv", f"{PROJ_DIR}/7_rdata/exp1_reads_summary.tsv"]
+
+
+rule __exp1:
+  input:
+    expand(PROJ_DIR + "/5_exp1/{ft}/{bt2_combo}/cov_{sim_cov}X/snps/snps_summary.tsv", sim_cov = SIM_COV_LIST, bt2_combo = BT2_COMBO, ft = FILTER_TYPES),
+    expand(PROJ_DIR + "/6_rtemp/exp1/{ft}/{bt2_combo}/summary_cov_{sim_cov}X.tsv", sim_cov = SIM_COV_LIST, bt2_combo = BT2_COMBO, ft = FILTER_TYPES),
+
+
+rule _exp2:
+  input:
+    [f"{PROJ_DIR}/7_rdata/exp2_sites_summary.tsv", f"{PROJ_DIR}/7_rdata/exp2_reads_summary.tsv"]
+
+
+rule __exp2:
+  input:
+    expand(PROJ_DIR + "/5_exp2/{ft}/{bt2_combo}/cov_{sim_cov}X/snps/snps_summary.tsv", sim_cov = SIM_COV_LIST, bt2_combo = BT2_BINS_W_CON, ft=["nofilter", "paired"]),
+
+
+rule _exp3_species:
+  input:
+    [f"{PROJ_DIR}/7_rdata/exp3_species_summary.tsv"]
+
+
+rule __exp3_species:
+  input:
+    expand(PROJ_DIR + "/5_exp3/species/sim/cov_{sim_cov}X/species/species_profile.tsv", sim_cov = SIM_COV_LIST),
+    expand(PROJ_DIR + "/5_exp3/species/mngs/cov_{sim_cov}X/species/species_profile.tsv", sim_cov = SIM_COV_LIST)
+
+
+rule _exp3_snps:
+  input:
+    [f"{PROJ_DIR}/7_rdata/exp3_sites_summary.tsv", f"{PROJ_DIR}/7_rdata/exp3_reads_summary.tsv"]
+
+
+rule __exp3_snps:
+  input:
+    expand(PROJ_DIR + "/5_exp3/snps/db_correct/cov_{sim_cov}X/snps/snps_summary.tsv", sim_cov = SIM_COV_LIST),
+    #expand(PROJ_DIR + "/5_exp3/snps/db_fp/cov_{sim_cov}X/snps/snps_summary.tsv", sim_cov = SIM_COV_LIST),
+    #expand(PROJ_DIR + "/5_exp3/snps/db_all/cov_{sim_cov}X/snps/snps_summary.tsv", sim_cov = SIM_COV_LIST),
+
+
+############################ SNPs
+rule _snps:
+  input:
+    expand(PROJ_DIR + "/3_midas/paired/{dt}/{bt2_combo}/cov_{sim_cov}X/snps/snps_summary.tsv", sim_cov = SIM_COV_LIST, bt2_combo = BT2_COMBO, dt=['sim', 'mngs']),
+    expand(PROJ_DIR + "/3_midas/single/{dt}/{bt2_combo}/cov_{sim_cov}X/snps/snps_summary.tsv", sim_cov = SIM_COV_LIST, bt2_combo = BT2_COMBO, dt=['sim', 'mngs']),
+    expand(PROJ_DIR + "/3_midas_nofilter/single/{dt}/{bt2_combo}/cov_{sim_cov}X/snps/snps_summary.tsv", sim_cov = SIM_COV_LIST, bt2_combo = BT2_COMBO, dt=['sim', 'mngs']),
+    expand(PROJ_DIR + "/3_midas_nofilter/paired/{dt}/{bt2_combo}/cov_{sim_cov}X/snps/snps_summary.tsv", sim_cov = SIM_COV_LIST, bt2_combo = BT2_COMBO, dt=['sim', 'mngs'])
+
+
+rule _snps_aln:
+  input:
+    expand(PROJ_DIR + "/4_bamaln/{dt}/{bt2_combo}/cov_{sim_cov}X.tsv", sim_cov = [20], bt2_combo = BT2_COMBO, dt=['sim', 'mngs'])
+
+
+
+TARGET_MSNPS = [
+      expand(f"{PROJ_DIR}/5_merge/paired/{{dt}}/{{bt2_combo}}/snps/snps_summary.tsv", bt2_combo = BT2_COMBO, dt=['sim', "mngs"]),
+      expand(f"{PROJ_DIR}/5_merge/single/{{dt}}/{{bt2_combo}}/snps/snps_summary.tsv", bt2_combo = BT2_COMBO, dt=['sim', "mngs"]),
+      expand(f"{PROJ_DIR}/5_merge/paired_nofilter/{{dt}}/{{bt2_combo}}/snps/snps_summary.tsv", bt2_combo = BT2_COMBO, dt=['sim', "mngs"]),
+      expand(f"{PROJ_DIR}/5_merge/single_nofilter/{{dt}}/{{bt2_combo}}/snps/snps_summary.tsv", bt2_combo = BT2_COMBO, dt=['sim', "mngs"]),
+    ]
+
+
+TARGET_MSNPS_SUMMARY = [
+      expand(PROJ_DIR + "/7_rtemp_major/paired/mngs/{bt2_combo}/summary_cov_{sim_cov}X.tsv", sim_cov = SIM_COV_LIST, bt2_combo = BT2_COMBO),
+      expand(PROJ_DIR + "/7_rtemp_major/paired/sim/{bt2_combo}/summary_cov_{sim_cov}X.tsv", sim_cov = SIM_COV_LIST, bt2_combo = BT2_COMBO),
+      expand(PROJ_DIR + "/7_rtemp_major/single/mngs/{bt2_combo}/summary_cov_{sim_cov}X.tsv", sim_cov = SIM_COV_LIST, bt2_combo = BT2_COMBO),
+      expand(PROJ_DIR + "/7_rtemp_major/single/sim/{bt2_combo}/summary_cov_{sim_cov}X.tsv", sim_cov = SIM_COV_LIST, bt2_combo = BT2_COMBO),
+      expand(PROJ_DIR + "/7_rtemp_major/paired_nofilter/mngs/{bt2_combo}/summary_cov_{sim_cov}X.tsv", sim_cov = SIM_COV_LIST, bt2_combo = BT2_COMBO),
+      expand(PROJ_DIR + "/7_rtemp_major/paired_nofilter/sim/{bt2_combo}/summary_cov_{sim_cov}X.tsv", sim_cov = SIM_COV_LIST, bt2_combo = BT2_COMBO),
+      expand(PROJ_DIR + "/7_rtemp_major/single_nofilter/mngs/{bt2_combo}/summary_cov_{sim_cov}X.tsv", sim_cov = SIM_COV_LIST, bt2_combo = BT2_COMBO),
+      expand(PROJ_DIR + "/7_rtemp_major/single_nofilter/sim/{bt2_combo}/summary_cov_{sim_cov}X.tsv", sim_cov = SIM_COV_LIST, bt2_combo = BT2_COMBO),
+    ]
+
+
+
+rule _msnps:
+    input: TARGET_MSNPS
+
+
+rule _msnps_summary:
+  input: TARGET_MSNPS_SUMMARY
+
+
+TARGET_SITES_SUMMARY = [
+      f"{PROJ_DIR}/8_rdata/sites_summary_paired_mngs.tsv", f"{PROJ_DIR}/8_rdata/sites_summary_paired_sim.tsv",
+      f"{PROJ_DIR}/8_rdata/sites_summary_single_mngs.tsv", f"{PROJ_DIR}/8_rdata/sites_summary_single_sim.tsv",
+      f"{PROJ_DIR}/8_rdata/sites_summary_paired_mngs_nf.tsv", f"{PROJ_DIR}/8_rdata/sites_summary_paired_sim_nf.tsv",
+      f"{PROJ_DIR}/8_rdata/sites_summary_single_mngs_nf.tsv", f"{PROJ_DIR}/8_rdata/sites_summary_single_sim_nf.tsv",
+    ]
+
+
+rule _sites:
+  input: TARGET_SITES_SUMMARY

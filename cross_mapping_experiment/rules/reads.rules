@@ -1,0 +1,172 @@
+# This set of rules include downloading UHGG genomes via MIDAS2 framework,
+# simulating on-target and off-target reads.
+
+
+#################################
+rule build_bt2_rep_dbs:
+  input:
+    f"{PROJ_DIR}/1_dbs/{{bt2_combo}}/genomes.tsv"
+  output:
+    species_ids = f"{PROJ_DIR}/1_dbs/{{bt2_combo}}/species_ids",
+    repspecies = f"{PROJ_DIR}/1_dbs/{{bt2_combo}}/repgenomes.species",
+    last_index = f"{PROJ_DIR}/1_dbs/{{bt2_combo}}/repgenomes.rev.1.bt2",
+  params:
+    midas_dbdir = f"{PROJ_DIR}/1_dbs/{{bt2_combo}}"
+  threads:
+    4
+  shell:
+    """
+    tail -n +2 {input} | awk '{{print $2}}' > {output.species_ids}
+
+    python -m iggtools build_bowtie2db \
+        --midasdb_name uhgg --midasdb_dir {params.midas_dbdir} --num_cores {threads} \
+        --bt2_indexes_name repgenomes --species_list {output.species_ids} \
+        --bt2_indexes_dir {params.midas_dbdir}
+    """
+
+
+#################################
+rule prepare_off_genomes:
+  input:
+    f"{PROJ_DIR}/1_dbs/{{bt2_combo}}/con_genome",
+  output:
+    f"{PROJ_DIR}/2_reads/neighbors/{{bt2_combo}}/genome.fna",
+  params:
+    midas_dbdir = f"{PROJ_DIR}/1_dbs/{{bt2_combo}}",
+    species = lambda wildcards: CON_GENOMES[wildcards.bt2_combo]["species"],
+    genome = lambda wildcards: CON_GENOMES[wildcards.bt2_combo]["genome"],
+    s3 = "s3://microbiome-igg/2.0/cleaned_imports"
+  shell:
+    """
+    genome_name=`cat {input}`
+    aws s3 cp {params.s3}/{params.species}/${{genome_name}}/${{genome_name}}.fna.lz4 - | lz4 -dc > {output}
+    """
+
+
+rule compute_off_coverage:
+  input:
+    f"{PROJ_DIR}/2_reads/neighbors/{{bt2_combo}}/genome.fna",
+  output:
+    f"{PROJ_DIR}/2_reads/neighbors/{{bt2_combo}}/sim_rc.tsv",
+  run:
+    compute_coverage(output[0], input[0], SIM_COV_LIST)
+
+
+rule simulate_off_reads:
+  input:
+    genome = f"{PROJ_DIR}/2_reads/neighbors/{{bt2_combo}}/genome.fna",
+    rc = f"{PROJ_DIR}/2_reads/neighbors/{{bt2_combo}}/sim_rc.tsv",
+  output:
+    r1 = f"{PROJ_DIR}/2_reads/neighbors/{{bt2_combo}}/2_trimmomatic/cov_" + config["sim_cov"] + "_paired_1.fastq",
+    r2 = f"{PROJ_DIR}/2_reads/neighbors/{{bt2_combo}}/2_trimmomatic/cov_" + config["sim_cov"] + "_paired_2.fastq",
+
+    ar1 = f"{PROJ_DIR}/2_reads/neighbors/{{bt2_combo}}/1_art/cov_" + config["sim_cov"] + "_1.fastq",
+    ar2 = f"{PROJ_DIR}/2_reads/neighbors/{{bt2_combo}}/1_art/cov_" + config["sim_cov"] + "_2.fastq",
+  params:
+    name = f"{PROJ_DIR}/2_reads/neighbors/{{bt2_combo}}/1_art/cov_" + config["sim_cov"],
+
+    rr1 = f"{PROJ_DIR}/2_reads/neighbors/{{bt2_combo}}/1_art/cov_" + config["sim_cov"] + "1.fq",
+    rr2 = f"{PROJ_DIR}/2_reads/neighbors/{{bt2_combo}}/1_art/cov_" + config["sim_cov"] + "2.fq",
+    ur1 = f"{PROJ_DIR}/2_reads/neighbors/{{bt2_combo}}/2_trimmomatic/cov_" + config["sim_cov"] + "_unpaired_1.fastq",
+    ur2 = f"{PROJ_DIR}/2_reads/neighbors/{{bt2_combo}}/2_trimmomatic/cov_" + config["sim_cov"] + "_unpaired_2.fastq",
+  shell:
+    """
+    art_illumina -ss HS25 -i {input.genome} -l {config[read_length]} -f {config[sim_cov]} -p \
+        -m {config[frag_length]} -s {config[frag_std]} -sp -o {params.name}
+
+    mv {params.rr1} {output.ar1}
+    mv {params.rr2} {output.ar2}
+
+    trimmomatic PE -threads {config[threads]} -phred33 \
+        {output.ar1} {output.ar2} {output.r1} {params.ur1} {output.r2} {params.ur2} \
+        LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:36
+    """
+
+
+rule downsample_off_reads:
+  input:
+    r1 = f"{PROJ_DIR}/2_reads/neighbors/{{bt2_combo}}/2_trimmomatic/cov_" + config["sim_cov"] + "_paired_1.fastq",
+    r2 = f"{PROJ_DIR}/2_reads/neighbors/{{bt2_combo}}/2_trimmomatic/cov_" + config["sim_cov"] + "_paired_2.fastq",
+    rc = f"{PROJ_DIR}/2_reads/neighbors/{{bt2_combo}}/sim_rc.tsv",
+  output:
+    r1 = f"{PROJ_DIR}/2_reads/neighbors/{{bt2_combo}}/cov_{{sim_cov}}_1.fastq.gz",
+    r2 = f"{PROJ_DIR}/2_reads/neighbors/{{bt2_combo}}/cov_{{sim_cov}}_2.fastq.gz",
+  shell:
+    """
+    rc=`grep -w {wildcards.sim_cov} {input.rc} | cut -f2`
+    seqtk sample -s100 {input.r1} $rc | gzip -c > {output.r1}
+    seqtk sample -s100 {input.r2} $rc | gzip -c > {output.r2}
+    """
+
+
+#################################
+rule compute_on_coverage:
+  input:
+    sim = f"{PROJ_DIR}/2_reads/sim/genome.fna",
+  output:
+    rc = f"{PROJ_DIR}/2_reads/sim/sim_rc.tsv",
+  run:
+    compute_coverage(output[0], input[0], SIM_COV_LIST)
+
+
+rule simulate_on_reads:
+  input:
+      genome = f"{PROJ_DIR}/2_reads/sim/genome.fna",
+      tsv = f"{PROJ_DIR}/2_reads/sim/sim_rc.tsv",
+  output:
+      r1 = f"{PROJ_DIR}/2_reads/sim/2_trimmomatic/cov_" + config["sim_cov"] + "_paired_1.fastq",
+      r2 = f"{PROJ_DIR}/2_reads/sim/2_trimmomatic/cov_" + config["sim_cov"] + "_paired_2.fastq",
+
+      ar1 = f"{PROJ_DIR}/2_reads/sim/1_art/cov_" + config["sim_cov"] + "_1.fastq",
+      ar2 = f"{PROJ_DIR}/2_reads/sim/1_art/cov_" + config["sim_cov"] + "_2.fastq",
+  params:
+      name = f"{PROJ_DIR}/2_reads/sim/1_art/cov_" + config["sim_cov"],
+      rr1 = f"{PROJ_DIR}/2_reads/sim/1_art/cov_" + config["sim_cov"] + "1.fq",
+      rr2 = f"{PROJ_DIR}/2_reads/sim/1_art/cov_" + config["sim_cov"] + "2.fq",
+      ur1 = f"{PROJ_DIR}/2_reads/sim/2_trimmomatic/cov_" + config["sim_cov"] + "_unpaired_1.fastq",
+      ur2 = f"{PROJ_DIR}/2_reads/sim/2_trimmomatic/cov_" + config["sim_cov"] + "_unpaired_2.fastq",
+  shell:
+      """
+      art_illumina -ss HS25 -i {input.genome} -l {config[read_length]} -f {config[sim_cov]} -p \
+          -m {config[frag_length]} -s {config[frag_std]} -sp -o {params.name}
+
+      mv {params.rr1} {output.ar1}
+      mv {params.rr2} {output.ar2}
+
+      trimmomatic PE -threads {config[threads]} -phred33 \
+          {output.ar1} {output.ar2} {output.r1} {params.ur1} {output.r2} {params.ur2} \
+          LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:36
+      """
+
+
+rule downsample_on_reads:
+    input:
+      r1 = f"{PROJ_DIR}/2_reads/sim/2_trimmomatic/cov_" + config["sim_cov"] + "_paired_1.fastq",
+      r2 = f"{PROJ_DIR}/2_reads/sim/2_trimmomatic/cov_" + config["sim_cov"] + "_paired_2.fastq",
+      rc = f"{PROJ_DIR}/2_reads/sim/sim_rc.tsv",
+    output:
+      r1 = f"{PROJ_DIR}/2_reads/sim/cov_{{sim_cov}}_1.fastq.gz",
+      r2 = f"{PROJ_DIR}/2_reads/sim/cov_{{sim_cov}}_2.fastq.gz",
+    shell:
+      """
+      rc=`grep -w {wildcards.sim_cov} {input.rc} | cut -f2`
+      seqtk sample -s100 {input.r1} $rc | gzip -c > {output.r1}
+      seqtk sample -s100 {input.r2} $rc | gzip -c > {output.r2}
+      """
+
+
+#################################
+rule combine_mngs_reads:
+  input:
+      on_r1 = f"{PROJ_DIR}/2_reads/sim/cov_{{sim_cov}}_1.fastq.gz",
+      on_r2 = f"{PROJ_DIR}/2_reads/sim/cov_{{sim_cov}}_2.fastq.gz",
+      off_r1 = f"{PROJ_DIR}/2_reads/neighbors/{{bt2_combo}}/cov_{{sim_cov}}_1.fastq.gz",
+      off_r2 = f"{PROJ_DIR}/2_reads/neighbors/{{bt2_combo}}/cov_{{sim_cov}}_2.fastq.gz",
+  output:
+      r1 = f"{PROJ_DIR}/2_reads/mngs/{{bt2_combo}}/cov_{{sim_cov}}_1.fastq.gz",
+      r2 = f"{PROJ_DIR}/2_reads/mngs/{{bt2_combo}}/cov_{{sim_cov}}_2.fastq.gz",
+  shell:
+      """
+      cat {input.on_r1} {input.off_r1} > {output.r1}
+      cat {input.on_r2} {input.off_r2} > {output.r2}
+      """

@@ -1,0 +1,104 @@
+## Experiment 3: mngs with the closest neighbor reads (1) run species flow (2) paired filters
+
+
+import pysam
+import numpy as np
+
+
+## As gold stardard
+rule exp3_snps_correct_db:
+  input:
+    r1 = f"{PROJ_DIR}/2_reads/mngs/{NEIGHBOR_BT2_BIN}/cov_{{sim_cov}}_1.fastq.gz",
+    r2 = f"{PROJ_DIR}/2_reads/mngs/{NEIGHBOR_BT2_BIN}/cov_{{sim_cov}}_2.fastq.gz",
+    species = f"{PROJ_DIR}/1_dbs/{NEIGHBOR_BT2_BIN}/repgenomes.species",
+  output:
+    f"{PROJ_DIR}/5_exp3/snps/db_correct/cov_{{sim_cov}}X/snps/snps_summary.tsv",
+    f"{PROJ_DIR}/5_exp3/snps/db_correct/cov_{{sim_cov}}X/temp/snps/repgenomes.bam",
+  params:
+    sample_name = f"cov_{{sim_cov}}X",
+    out = f"{PROJ_DIR}/5_exp3/snps/db_correct",
+  threads:
+    4
+  shell:
+    """
+    python -m iggtools midas_run_species \
+        --sample_name {params.sample_name} -1 {input.r1} -2 {input.r2} \
+        --midasdb_name uhgg --midasdb_dir {MIDASDB_SAFE} \
+        --num_cores {threads} {params.out}
+
+    python3 -m iggtools midas_run_snps --sample {params.sample_name} \
+        -1 {input.r1} -2 {input.r2} --midasdb_name uhgg --midasdb_dir {MIDASDB_DIR} \
+        --species_list {input.species} --select_threshold=-1 \
+        --advanced  --paired_only --fragment_length 1000 \
+        --num_cores {threads} {params.out}
+    """
+
+
+## This is what MIDAS report, sometimes with FP, most times not.
+rule exp3_snps_with_falsepositive:
+  input:
+    r1 = f"{PROJ_DIR}/2_reads/mngs/{NEIGHBOR_BT2_BIN}/cov_{{sim_cov}}_1.fastq.gz",
+    r2 = f"{PROJ_DIR}/2_reads/mngs/{NEIGHBOR_BT2_BIN}/cov_{{sim_cov}}_2.fastq.gz",
+  output:
+    f"{PROJ_DIR}/5_exp3/snps/db_fp/cov_{{sim_cov}}X/snps/snps_summary.tsv",
+    f"{PROJ_DIR}/5_exp3/snps/db_fp/cov_{{sim_cov}}X/temp/snps/repgenomes.bam",
+  params:
+    sample_name = f"cov_{{sim_cov}}X",
+    out = f"{PROJ_DIR}/5_exp3/snps/db_fp",
+  threads:
+    4
+  shell:
+    """
+    python -m iggtools midas_run_species \
+        --sample_name {params.sample_name} -1 {input.r1} -2 {input.r2} \
+        --midasdb_name uhgg --midasdb_dir {MIDASDB_SAFE} \
+        --num_cores {threads} {params.out}
+
+    python3 -m iggtools midas_run_snps --sample {params.sample_name} \
+        -1 {input.r1} -2 {input.r2} --midasdb_name uhgg --midasdb_dir {MIDASDB_DIR} \
+        --select_by median_marker_coverage,unique_fraction_covered \
+        --select_threshold 0,0.5 \
+        --advanced  --paired_only --fragment_length 1000 \
+        --num_cores {threads} {params.out}
+    """
+
+############################################
+rule exp3_snps_summary:
+  input:
+    truesites = f"{PROJ_DIR}/4_truesites/sim_rep_true_sites.tsv",
+    s1 = f"{PROJ_DIR}/5_exp3/snps/db_correct/cov_{{sim_cov}}X/snps/snps_summary.tsv",
+    #s2 = f"{PROJ_DIR}/5_exp3/snps/db_fp/cov_{{sim_cov}}X/snps/snps_summary.tsv",
+    #s3 = f"{PROJ_DIR}/5_exp3/snps/db_all/cov_{{sim_cov}}X/snps/snps_summary.tsv",
+  output:
+    s1 = f"{PROJ_DIR}/6_rtemp/exp3/db_correct/summary_cov_{{sim_cov}}X.tsv",
+    #s2 = f"{PROJ_DIR}/6_rtemp/exp3/db_fp/summary_cov_{{sim_cov}}X.tsv",
+    #s3 = f"{PROJ_DIR}/6_rtemp/exp3/db_all/summary_cov_{{sim_cov}}X.tsv",
+  threads: 2
+  params:
+    p1 = f"{PROJ_DIR}/5_exp3/snps/db_correct/cov_{{sim_cov}}X/snps/{ON_TARGET_SPECIES}.snps.tsv.lz4",
+    #p2 = f"{PROJ_DIR}/5_exp3/snps/db_fp/cov_{{sim_cov}}X/snps/{ON_TARGET_SPECIES}.snps.tsv.lz4",
+    #p3 = f"{PROJ_DIR}/5_exp3/snps/db_all/cov_{{sim_cov}}X/snps/{ON_TARGET_SPECIES}.snps.tsv.lz4",
+    py = LIB_DIR + "/bin/summarize_sites.py",
+    ma1 = f"{PROJ_DIR}/6_rtemp/exp3/db_correct/major_alleles_cov_{{sim_cov}}X.tsv.lz4",
+    #ma2 = f"{PROJ_DIR}/6_rtemp/exp3/db_fp/major_alleles_cov_{{sim_cov}}X.tsv.lz4",
+    #ma3 = f"{PROJ_DIR}/6_rtemp/exp3/db_all/major_alleles_cov_{{sim_cov}}X.tsv.lz4",
+  shell:
+    """
+    python {params.py} --truesites_fp {input.truesites} --pileup_fp {params.p1} --summary_fp {output.s1}  --out_fp {params.ma1}
+
+    """
+
+
+rule exp3_snps_merge_summary:
+  input:
+    expand(f"{PROJ_DIR}/6_rtemp/exp3/{{db}}/summary_cov_{{sim_cov}}X.tsv", sim_cov=SIM_COV_LIST, db=["db_fp", "db_correct", "db_all"])
+  output:
+    sites = f"{PROJ_DIR}/7_rdata/exp3_sites_summary.tsv",
+    reads = f"{PROJ_DIR}/7_rdata/exp3_reads_summary.tsv"
+  threads: 2
+  params:
+    R = LIB_DIR + "/bin/merge_exp3_snps.R",
+  shell:
+    """
+    Rscript {params.R} {PROJ_DIR} {output.sites} {output.reads}
+    """

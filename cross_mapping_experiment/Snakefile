@@ -1,0 +1,87 @@
+####
+# Evaluate genome selections effect for alignment based SNP calling
+# author: Chunyu Zhao chunyu.zhao@czbiohub.org
+# time: 2020-09-16
+####
+
+import os
+import sys
+import configparser
+from collections import defaultdict
+from Bio import SeqIO
+from math import ceil
+import pysam
+import numpy as np
+
+
+# Species Project Dir
+ON_TARGET_SPECIES = str(config["species_id"])
+PROJ_DIR = config["base_dir"] + "/" + ON_TARGET_SPECIES
+LIB_DIR = config["lib_dir"]
+
+
+BT2_COMBO_ON = []
+BT2_COMBO_OFF = []
+with open(f"{PROJ_DIR}/curr_fastani.tsv") as stream:
+    header = next(stream).strip().split("\t")
+    for line in stream:
+        line = line.strip().split("\t")
+        ani_int = line[2]
+        if line[5] == line[3]:
+            BT2_COMBO_ON.append(f"ani.{ani_int}")
+        else:
+            BT2_COMBO_OFF.append(f"ani.{ani_int}")
+
+
+SIM_COV_LIST = [20]
+FILTER_TYPES = ["nofilter"]
+
+
+with open(f"{PROJ_DIR}/uhgg_rep") as stream:
+    for line in stream:
+        ON_TARGET_REP = line.rstrip()
+
+
+CON_GENOMES = defaultdict(dict)
+for bt2_db in BT2_COMBO:
+    # Read in confounding genomes: both on-target and off-target
+    with open(f"{PROJ_DIR}/1_dbs/{bt2_db}/con_genome") as stream:
+        for line in stream:
+            con_genome = line.strip()
+    if con_genome == "NA":
+        continue
+
+    genome_fp = f"{PROJ_DIR}/1_dbs/{bt2_db}/genomes.tsv"
+    with open(genome_fp) as stream:
+        header = next(stream).strip().split("\t")[:2]
+        for line in stream:
+            line = line.strip().split("\t")[:2]
+            species_id = line[1]
+            if line[0] != ON_TARGET_REP or bt2_db == "ani.100":
+                CON_GENOMES[bt2_db]["species"] = species_id
+                CON_GENOMES[bt2_db]["genome"] = con_genome
+
+
+BT2_BINS_W_CON = list(CON_GENOMES.keys())
+
+def compute_coverage(outfile, fastafile, SIM_COV_LIST):
+  with open(outfile, "w") as stream:
+    genome_length = 0
+    for record in SeqIO.parse(fastafile, "fasta"):
+      genome_length += len(record.seq)
+
+    for coverage in SIM_COV_LIST:
+      read_counts = ceil(genome_length * coverage / config["read_length"] / 2)
+      stream.write("\t".join([str(coverage), str(read_counts)]) + "\n")
+
+
+
+
+
+include: "rules/target.rules"
+include: "rules/reads.rules"
+include: "rules/nucmer.rules"
+include: "rules/exp1.rules"
+include: "rules/exp2.rules"
+include: "rules/exp3-species.rules"
+include: "rules/exp3-snps.rules"

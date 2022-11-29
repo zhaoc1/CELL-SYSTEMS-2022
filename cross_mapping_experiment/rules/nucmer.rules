@@ -1,0 +1,106 @@
+# This set of rules include whole genome alignment via mummer, filter high
+# quality aligned fragments and generate true_sites.
+
+
+rule download_rep_genome:
+  input:
+    rep = f"{PROJ_DIR}/uhgg_rep",
+  output:
+    rep = f"{PROJ_DIR}/1_dbs/rep_genome.fna",
+  params:
+    s3 = "s3://microbiome-igg/2.0/gene_annotations",
+    species = ON_TARGET_SPECIES,
+  shell:
+    """
+    genome_name=`cat {input.rep}`
+    aws s3 cp {params.s3}/{params.species}/${{genome_name}}/${{genome_name}}.fna.lz4 - | lz4 -dc > {output}
+    """
+
+rule run_nucmer:
+    input:
+        sim = f"{PROJ_DIR}/2_reads/sim/genome.fna", #ncbi strain
+        rep = f"{PROJ_DIR}/1_dbs/rep_genome.fna",
+        #con = f"{PROJ_DIR}/2_reads/neighbors/ani.100/genome.fna",
+    output:
+        PROJ_DIR + "/3_nucmer/sim_rep" + ".delta",
+        PROJ_DIR + "/3_nucmer/sim_rep" + ".coords",
+        PROJ_DIR + "/3_nucmer/sim_rep" + ".snps",
+        pdf = PROJ_DIR + "/4_truesites/sim_rep" + ".coords.hist.pdf"
+    params:
+        spid = "sim_rep",
+        spid_dir = PROJ_DIR + "/3_nucmer",
+        mincluster = 100,
+        R = LIB_DIR + "/bin/auto_min_pid_by_delta.R",
+    threads:
+        2
+    shell:
+        """
+        cd {params.spid_dir}
+        nucmer --mum -c {params.mincluster} -p {params.spid}.raw {input.rep} {input.sim}
+
+        delta-filter -q -r {params.spid}.raw.delta > {params.spid}.temp.delta
+        show-coords -r -c -l {params.spid}.temp.delta > {params.spid}.temp.coords
+
+        # filter coords by pident
+        min_pid_by_delta=`Rscript {params.R} {params.spid}.temp.coords {output.pdf}`
+
+        delta-filter -q -r -i ${{min_pid_by_delta}} {params.spid}.temp.delta > {params.spid}.delta
+
+        show-coords -r -c -l {params.spid}.delta > {params.spid}.coords
+        show-snps -C -r -T -H {params.spid}.delta > {params.spid}.snps
+        """
+
+
+rule show_aligns:
+    input:
+        delta = PROJ_DIR + "/3_nucmer/sim_rep" + ".delta",
+        coords = PROJ_DIR + "/3_nucmer/sim_rep" + ".coords",
+    output:
+        PROJ_DIR + "/3_nucmer/DONE-show-aligns-sim_rep"
+    params:
+        spid = "sim_rep",
+        spid_dir = PROJ_DIR + "/3_nucmer",
+        lofc = PROJ_DIR + "/3_nucmer/loc.tsv",
+        extract_sh = LIB_DIR + "/bin/extract_contigs.sh",
+        show_align_sh = LIB_DIR + "/bin/run_show_aligns.sh"
+    threads:
+        12
+    shell:
+        """
+        bash {params.extract_sh} {input.coords} {params.lofc}
+
+        cat {params.lofc} | xargs -Ixx -P {threads} bash -c "bash {params.show_align_sh} {input.delta} 'xx' "
+
+        touch {output}
+        """
+
+
+rule generate_aligned_sites:
+    input:
+        snps = PROJ_DIR + "/3_nucmer/sim_rep" + ".snps",
+        coords = PROJ_DIR + "/3_nucmer/sim_rep" + ".coords",
+        qrygenome = f"{PROJ_DIR}/2_reads/sim/genome.fna",
+        repgenome = f"{PROJ_DIR}/1_dbs/rep_genome.fna",
+        flag = PROJ_DIR + "/3_nucmer/DONE-show-aligns-sim_rep"
+    output:
+        sites = PROJ_DIR + "/3_nucmer/" + "sim_rep_aligned_sites.tsv",
+        pdf = PROJ_DIR + "/4_truesites/" + "sim_rep_heatmap_coords_refqry.pdf"
+    params:
+        R = LIB_DIR + "/bin/mummer_sites.R",
+    threads:
+        2
+    shell:
+        """
+        Rscript {params.R} {input.snps} {input.coords} {input.repgenome} {input.qrygenome} {output.sites} {output.pdf}
+        """
+
+
+rule reference_sets:
+    input:
+        PROJ_DIR + "/3_nucmer/" + "sim_rep_aligned_sites.tsv"
+    output:
+        PROJ_DIR + "/4_truesites/" + "sim_rep_true_sites.tsv"
+    params:
+        R = LIB_DIR + "/bin/mummer_sites.R",
+    shell:
+        "Rscript {params.R} {input} {output}"

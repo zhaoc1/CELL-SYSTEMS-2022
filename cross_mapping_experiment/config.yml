@@ -1,0 +1,18 @@
+admins: chunyu.zhao@czbiohub.org
+
+
+species_id: 100001
+base_dir: /mnt/cz/20220602_close_species
+lib_dir: /mnt/cz/cross_mapping_simulation
+
+threads: 4
+
+## art
+sim_cov: "20"
+read_length: 150
+frag_length: 1000
+frag_std: 100
+
+
+##
+min_allele_depth: 2
