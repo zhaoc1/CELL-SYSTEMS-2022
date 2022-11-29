@@ -1,0 +1,965 @@
+---
+title: "Figures For CELL-SYSTEMS-D-22-00268R1"
+author: "Chunyu Zhao"
+date: \today
+output: 
+  pdf_document:
+    toc: true
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, echo=FALSE}
+knitr::opts_chunk$set(
+  echo=FALSE,
+  warning=FALSE,
+  message=FALSE,
+  fig.height = 6,
+  fig.width = 12,
+  cache=FALSE
+  )
+```
+
+
+```{r}
+library(tidyverse)
+library(pander)
+library(magrittr)
+library(ggsci)
+library(ggbeeswarm)
+library(grid)
+library(gridExtra)
+library(tidyselect)
+
+library(readr)
+library(stringr)
+library(reshape2)
+library(forcats)
+library(data.table)
+
+library(RColorBrewer)
+library(ggalluvial)
+library(ggnewscale)
+
+options(scipen=999)
+panderOptions('knitr.auto.asis', FALSE)
+```
+
+# Data
+
+```{r}
+# input directory
+data_dir <- "Rdata"
+# output directory
+fig_dir <- "figures"
+dir.create(fig_dir, showWarnings = F, recursive = T)
+
+## We only keep MAGs with Completeness >= 80, Contamination <= 5, Genome counts > 1.
+uhgg_reps <- read_delim(file.path(data_dir, "uhgg_reps.tsv"), delim = "\t", show_col_types = F) %>%
+  mutate(species = as.character(species), species_2 = as.character(species_2))
+list_of_close_species <- uhgg_reps %>% filter(ani >= 92) %>% .$species
+
+within_species_anis <- read_delim(file.path(data_dir, "sim_on.tsv"), delim = "\t", show_col_types = F) %>%
+  mutate(species = as.character(species))
+within_species_anis %<>% dplyr::rename(con_genome = Genome)
+
+list_of_close_species <- intersect(list_of_close_species, within_species_anis$species)
+```
+
+## ANI bins
+
+```{r}
+ani_bins <- read_delim(file.path(data_dir, "ani_bins.tsv"), delim = "\t", show_col_types = F) %>%
+  mutate(on_target_species = as.character(on_target_species), species_id = as.character(species_id))
+
+full_bins <- read_delim(file.path(data_dir, "full_bins.tsv"), delim = "\t", show_col_types = F) %>%
+  mutate(on_target_species = as.character(on_target_species), species_id = as.character(species_id))
+
+
+random_anibin <- ani_bins %>% 
+  group_by(on_target_species) %>%
+  filter(ani_int == min(ani_int)) %>%
+  ungroup() %>% 
+  select(on_target_species, species_id, ani_bin) %>%
+  dplyr::rename(random_species = species_id) %>%
+  dplyr::rename(random_bin = ani_bin)
+
+updated_ani_bins <- ani_bins %>% dplyr::rename(ani_bin_raw = ani_bin) %>% 
+  left_join(random_anibin, by=c("on_target_species", "species_id" = "random_species")) %>%
+  mutate(ani_bin = ifelse(!is.na(random_bin), "ani.<77", as.character(ani_bin_raw))) %>%
+  select(-random_bin) %>%
+  mutate(ani_bin = ifelse(ani < 77 & ani_bin != "ani.<77", "ani.<77", ani_bin))
+
+
+bt2_levels_off <- updated_ani_bins %>%
+  filter(species_id != on_target_species) %>%
+  mutate(ani_int = ifelse(ani_bin == "ani.<77", 50, ani_int)) %>%
+  mutate(ani_bin = as.factor(ani_bin)) %>%
+  mutate(ani_bin = fct_reorder(ani_bin, ani_int, .desc=TRUE)) %>%
+  .$ani_bin %>%
+  levels()
+
+bt2_levels_on <- updated_ani_bins %>% 
+  filter(species_id == on_target_species) %>%
+  select(ani_int, ani_bin) %>% 
+  unique() %>%
+  arrange(desc(ani_int)) %>%
+  mutate(ani_bin = factor(ani_bin, levels = .$ani_bin)) %>%
+  .$ani_bin %>%
+  levels()
+
+bt2_levels_on <- gsub("ani.", "", bt2_levels_on)
+bt2_levels_off <- gsub("ani.", "", bt2_levels_off)
+```
+
+
+## Load BAM counts
+
+- For the neighbor reads, we look at neighbor correctly aligned, and neighbor incorrelctly aligned (on the species level).
+
+```{r}
+bamstats <- read_delim(file.path(data_dir, "bamstats.tsv"), delim = "\t", show_col_types = F) %>%
+  mutate(on_target_species = as.character(on_target_species)) %>%
+  mutate(species_id = as.character(species_id)) %>%
+  mutate(con_species_id = as.character(con_species_id))
+```
+
+
+# Figure 4A: Reference Bias
+
+```{r}
+reference_bias_data <- read_delim(file.path(data_dir, "reference_bias_data.tsv"), delim = "\t", show_col_types = F) %>%
+  mutate(on_target_species = as.character(on_target_species), con_species_id = as.character(con_species_id))
+
+cor.test(reference_bias_data$intra_species_ani, reference_bias_data$aligned_rate)
+
+manual_color = pal_lancet("lanonc", alpha = 0.9)(9)[c(1,5,3,6,4,2)]
+
+f <- reference_bias_data %>%
+  ggplot(aes(x = intra_species_ani,y = aligned_rate)) + 
+  geom_quasirandom(size = 1) +
+  labs(x = "Intra-species ANI (%)", y = "Alignment rate") + 
+  geom_smooth(method = "lm") + 
+  theme_bw()
+ggsave(file.path(fig_dir, "Figure4A_reference_bias.pdf"), width = 5, height = 4, useDingbats = F)
+```
+
+
+```{r}
+bamstats %<>% 
+  filter(on_bin != off_bin) %>%
+  mutate(bamfile_label = ifelse(on_target_species == species_id, "on-genome", "neighbor-genome")) %>%
+  mutate(species_label = ifelse(species_id == con_species_id, "correct-mapping", "cross-mapping"))
+```
+
+
+# Figure 6: MAPQ & MAPID Boxplot
+
+```{r}
+species_under_investigation <- "100197"
+bamalns <- read_delim(file.path(data_dir, "bamalns.tsv"), delim = "\t", show_col_types = F)
+
+bt2_levels <- bamalns %>% 
+  select(bt2_db) %>%
+  unique() %>%
+  mutate(bt2_db = gsub("ani.", "", bt2_db)) %>%
+  mutate(bt2_int = bt2_db) %>%
+  mutate(bt2_db = ifelse(bt2_int == "UHGG", "94.5", bt2_db)) %>% 
+  mutate(bt2_int = ifelse(bt2_db == 76, "<77", bt2_int)) %>% 
+  select(bt2_db, bt2_int)
+
+bt2_levels %<>%
+  arrange(desc(bt2_db)) %>%
+  mutate(bt2_int = factor(bt2_int, levels = .$bt2_int)) %>%
+  .$bt2_int %>%
+  levels()
+
+my_bt2_levels <- gsub("<77", "Random", bt2_levels)
+my_bt2_levels <- gsub("95", "Rep", my_bt2_levels)
+
+manual_color = pal_futurama()(9)[c(2,3)]
+```
+
+
+```{r}
+plotdata <- bamalns %>% 
+  select(bt2_db, ref_id, qry_id, mapq, is_ontarget) %>%
+  mutate(bt2_db = gsub("ani.", "", bt2_db)) %>%
+  mutate(bt2_int = ifelse(bt2_db == 76, "Random", bt2_db)) %>%
+  mutate(bt2_int = ifelse(bt2_int == 95, "Rep", bt2_int)) %>%
+  mutate(bt2_int = ifelse(bt2_int == 94.5, "UHGG", bt2_int)) %>%
+  mutate(bt2_int = factor(bt2_int, levels = my_bt2_levels)) %>%
+  mutate(label = ifelse(is_ontarget == "on-target", "On-target", "Off-target")) %>%
+  mutate(label = factor(label, levels = c("On-target", "Off-target")))
+
+
+f1 <- plotdata %>%
+  ggplot(aes(x = bt2_int, y = mapq, color = label)) +
+  theme_bw() +
+  scale_color_manual(values = manual_color, name = "") + 
+  geom_boxplot(coef = 1) +
+  labs(y = "MAPQ", x = "Average nucleotide identity of closest relative in database (%)") + 
+  theme(legend.position = "none")
+ggsave(file.path(fig_dir, paste("Figure6A_MAPQ_", species_under_investigation, ".pdf", sep="")), f1, width = 5, height = 4, useDingbats = F)
+
+
+plotdata <- bamalns %>% 
+  select(bt2_db, ref_id, qry_id, mapid, is_ontarget) %>%
+  filter(!bt2_db %in% c("ani.77", "ani.78")) %>%
+  mutate(bt2_db = gsub("ani.", "", bt2_db)) %>%
+  mutate(bt2_int = ifelse(bt2_db == 76, "Random", bt2_db)) %>%
+  mutate(bt2_int = ifelse(bt2_int == 95, "Rep", bt2_int)) %>%
+  mutate(bt2_int = ifelse(bt2_int == 94.5, "UHGG", bt2_int)) %>%
+  mutate(bt2_int = factor(bt2_int, levels = my_bt2_levels)) %>%
+  mutate(label = ifelse(is_ontarget == "on-target", "On-target", "Off-target")) %>%
+  mutate(label = factor(label, levels = c("On-target", "Off-target")))
+
+f1 <- plotdata %>% 
+  ggplot(aes(x = bt2_int, y = mapid, color = label)) +
+  theme_bw() +
+  geom_boxplot(coef = 1) +
+  scale_color_manual(values = manual_color, name = "") + 
+  labs(y = "MAPID", x = "Average nucleotide identity of closest relative in database (%)")
+ggsave(file.path(fig_dir, paste("Figure6B_MAPID_", species_under_investigation, ".pdf", sep="")), f1, width = 5, height = 4, useDingbats = F)
+```
+
+# Figure S6: Read Flow Chat
+
+```{r}
+bt2_levels <- bt2_levels[!grepl("79", bt2_levels)]
+my_levels <- gsub("<77", "Random", bt2_levels)
+my_levels <- gsub("95", "Rep", my_levels)
+
+plotdata <- bamalns %>%
+  filter(!bt2_db %in% c("ani.77", "ani.78", "ani.79")) %>%
+  mutate(bt2_db = gsub("ani.", "", bt2_db)) %>%
+  mutate(bt2_int = ifelse(bt2_db == 95, "Rep", bt2_db)) %>%
+  mutate(bt2_int = ifelse(bt2_db == 76, "Random", bt2_int)) %>%
+  mutate(bt2_int = factor(bt2_int, levels = my_levels)) %>%
+  mutate(label = ifelse(is_ontarget == "on-target", "TP Species", "FP Species")) %>%
+  mutate(label = factor(label, levels = c("TP Species", "FP Species"))) %>%
+  mutate(chunk = ifelse(mapq >= 10 & mapid >= 94, "Pass", "Fail")) %>%
+  mutate(chunk = ifelse(mapq < 10 & mapid >= 94, "Low MAPQ", as.character(chunk))) %>%
+  mutate(chunk = ifelse(mapq < 10 & mapid < 94, "Fail", as.character(chunk))) %>%
+  mutate(qry = paste(qry_id, read, sep="-")) %>%
+  select(qry, bt2_int, label, chunk)
+
+plotdata %<>% 
+  unite(grp, label:chunk, sep="\n")  %>% 
+  mutate(bt2_int = factor(bt2_int, levels = my_levels)) %>%
+  spread(bt2_int, grp, fill="Unaligned") %>% 
+  select(-qry) %>% 
+  group_by_all() %>% 
+  summarise(ReadCounts = n()) %>% ungroup() %>%
+  mutate(id = row_number())
+
+f3 <- plotdata %>%
+  gather(bt2_int, grp, my_levels) %>%
+  mutate(bt2_int = factor(bt2_int, levels = my_levels)) %>%
+  ggplot(aes(x = bt2_int, stratum = grp, alluvium = id, y = ReadCounts, fill = grp, label = grp)) +
+  theme_bw() + 
+  scale_x_discrete(expand = c(.1, .1)) +
+  geom_flow() +
+  geom_stratum(alpha = .5) +
+  labs(x = "Average nucleotide identity of closest relative in database (%)", y = "Read counts") + 
+  geom_text(stat = "stratum", size = 3) +
+  theme(legend.position = "none") +
+  theme(plot.title = element_text(hjust = 0.5)) 
+ggsave(file.path(fig_dir, "FigureS6B_readflow_100197_MAPQ.10.pdf"), f3, width = 16, height = 10, useDingbats = F)
+```
+
+
+```{r}
+plotdata <- bamalns %>%
+  filter(!bt2_db %in% c("ani.77", "ani.78", "ani.79")) %>%
+  mutate(bt2_db = gsub("ani.", "", bt2_db)) %>%
+  mutate(bt2_int = ifelse(bt2_db == 95, "Rep", bt2_db)) %>%
+  mutate(bt2_int = ifelse(bt2_db == 76, "Random", bt2_int)) %>%
+  mutate(bt2_int = factor(bt2_int, levels = my_levels)) %>%
+  mutate(label = ifelse(is_ontarget == "on-target", "TP Species", "FP Species")) %>%
+  mutate(label = factor(label, levels = c("TP Species", "FP Species"))) %>%
+  mutate(chunk = ifelse(mapq >= 30 & mapid >= 94, "Pass", "Fail")) %>%
+  mutate(chunk = ifelse(mapq < 30 & mapid >= 94, "Low MAPQ", as.character(chunk))) %>%
+  mutate(chunk = ifelse(mapq < 30 & mapid < 94, "Fail", as.character(chunk))) %>%
+  mutate(qry = paste(qry_id, read, sep="-")) %>%
+  select(qry, bt2_int, label, chunk)
+
+plotdata %<>% 
+  unite(grp, label:chunk, sep="\n")  %>% 
+  mutate(bt2_int = factor(bt2_int, levels = my_levels)) %>%
+  spread(bt2_int, grp, fill="Unaligned") %>% 
+  select(-qry) %>% 
+  group_by_all() %>% 
+  summarise(ReadCounts = n()) %>% ungroup() %>%
+  mutate(id = row_number())
+
+f3 <- plotdata %>%
+  gather(bt2_int, grp, my_levels) %>%
+  mutate(bt2_int = factor(bt2_int, levels = my_levels)) %>%
+  ggplot(aes(x = bt2_int, stratum = grp, alluvium = id, y = ReadCounts, fill = grp, label = grp)) +
+  theme_bw() + 
+  scale_x_discrete(expand = c(.1, .1)) +
+  geom_flow() +
+  geom_stratum(alpha = .5) +
+  labs(x = "Average nucleotide identity of closest relative in database (%)", y = "Read counts") + 
+  geom_text(stat = "stratum", size = 3) +
+  theme(legend.position = "none") +
+  theme(plot.title = element_text(hjust = 0.5)) 
+ggsave(file.path(fig_dir, "FigureS6A_readflow_100197_MAPQ.30.pdf"), f3, width = 16, height = 10, useDingbats = F)
+```
+
+
+# Cross Mapping
+
+- neighbor-incorrect: neighbor reads cross mapped to on-target genome
+- neighbor-correct: neighbor reads mapped to off-target genome
+
+## Figure S2: for Neighbor Genome
+
+```{r}
+neighbor_reads <- read_delim(file.path(data_dir, "neighbor_reads.tsv"), delim = "\t", show_col_types = F) %>%
+  mutate(on_target_species = as.character(on_target_species), con_species_id = as.character(con_species_id))
+
+manual_color = pal_lancet("lanonc", alpha = 0.9)(9)[c(1,5,3,6,4,2)]
+
+
+f <- neighbor_reads %>%
+  mutate(on_bin = gsub("ani.", "", on_bin)) %>%
+  mutate(off_bin = gsub("ani.", "", off_bin)) %>%
+  mutate(on_bin = factor(on_bin, levels = bt2_levels_on)) %>%
+  mutate(off_bin = factor(off_bin, levels = bt2_levels_off)) %>%
+  ggplot(aes(x = off_bin, y = cross_rate, color = on_bin)) + 
+  geom_quasirandom(size = 1) + 
+  theme_bw() +
+  scale_color_manual(values = manual_color, name = "Intra-species\nANI") + 
+  scale_y_continuous(limits = c(0, 0.8), breaks = seq(0, 0.8, by =0.1), labels = scales::percent_format(fraction_covered_sites = 5L)) +
+  labs(x = "Average nucleotide identity of closest relative in database (%)") + 
+  labs(y = "Cross-mapping rate")
+ggsave(file.path(fig_dir, "FigureS2_cross_mapping_neighbor.pdf"), f, width = 10, height = 5, useDingbats = F)
+
+
+test_data <- neighbor_reads %>%
+  left_join(full_bins %>% select(on_target_species, intra_species_ani:off_bin), by=c("on_target_species", "on_bin", "ani_bin_raw" = "off_bin")) %>%
+  filter(off_bin != "ani.<77") %>% #remove ani.None since there is no ANI values: missing value
+  select(on_target_species, cross_rate, intra_species_ani, between_species_ani)
+
+summary(aov(cross_rate ~  intra_species_ani * between_species_ani + Error(on_target_species), data = test_data))
+```
+
+
+## Figure 5A: for on-target Genome
+
+
+```{r}
+ontarget_reads <- read_delim(file.path(data_dir, "ontarget_reads.tsv"), delim = "\t", show_col_types = F) %>%
+  mutate(on_target_species = as.character(on_target_species))
+
+f <- ontarget_reads %>%
+  mutate(on_bin = gsub("ani.", "", on_bin)) %>%
+  mutate(off_bin = gsub("ani.", "", off_bin)) %>%
+  mutate(on_bin = factor(on_bin, levels = bt2_levels_on)) %>%
+  mutate(off_bin = factor(off_bin, levels = bt2_levels_off)) %>%
+  ggplot(aes(x = off_bin, y = cross_rate, color = on_bin)) + 
+  geom_quasirandom(size = 1) + 
+  theme_bw() + 
+  scale_color_manual(values = manual_color, name = "Intra-species\nANI") + 
+  scale_y_continuous(limits = c(0, 0.6), breaks = seq(0, 0.6, by =0.1), labels = scales::percent_format(fraction_covered_sites = 5L)) +
+  labs(x = "Average nucleotide identity of closest relative in database (%)") + 
+  labs(y = "Cross-mapping rate")
+ggsave(file.path(fig_dir, "Figure5A_cross_mapping_target.pdf"), f, width = 10, height = 5, useDingbats = F)
+
+
+test_data <- ontarget_reads %>%
+  left_join(full_bins %>% select(on_target_species, intra_species_ani:off_bin), by=c("on_target_species", "on_bin", "ani_bin_raw" = "off_bin"))  %>%
+  filter(off_bin != "ani.<77") %>%
+  select(on_target_species, cross_rate, intra_species_ani, between_species_ani)
+
+summary(aov(cross_rate ~  intra_species_ani * between_species_ani + Error(on_target_species), data = test_data))
+```
+
+
+## MIDAS2 SNPs summary
+
+```{r}
+snps_summary <- read_delim(file.path(data_dir, "snps_summary.tsv"), delim = "\t", show_col_types = F) %>%
+  mutate(on_target_species = as.character(on_target_species), species_id = as.character(species_id), con_species_id = as.character(con_species_id)) %>%
+  select(-percentage_aligned_reads) %>%
+  mutate(is_ontarget = ifelse(species_id == on_target_species, "on-target", "off-target"))
+
+snps_summary %<>% 
+  mutate(on_bin = gsub("ani.", "", on_bin)) %>%
+  mutate(off_bin = gsub("ani.", "", off_bin)) %>%
+  mutate(on_bin = factor(on_bin, levels = bt2_levels_on)) %>%
+  mutate(off_bin = factor(off_bin, levels = bt2_levels_off))
+```
+
+
+## Figure 5B: horizontal coverage
+
+- Only one species in the reads and two species in the database.
+- for off-target reads, there is no concept of percentage_aligned_reads because it is all from cross-mapping
+
+```{r}
+manual_color = pal_lancet("lanonc", alpha = 0.9)(9)[c(1,5,3,6,4,2)]
+
+f <- snps_summary %>%
+  filter(species_id != on_target_species) %>% #<-----
+  select(on_target_species, on_bin, off_bin, species_id, is_ontarget, fraction_covered_sites, relative_vertical_coverage) %>%
+  ggplot(aes(x = off_bin, y = fraction_covered_sites, color = on_bin)) + 
+  scale_y_continuous(limits = c(0, 0.8), breaks = seq(0, 0.8, by =0.1), labels = scales::percent_format(fraction_covered_sites = 5L)) +
+  geom_quasirandom(size = 1.2) +
+  scale_color_manual(values = manual_color, name = "Intra-species\nANI") + 
+  theme_bw() + 
+  labs(x = "Average nucleotide identity of closest relative in database (%)") + 
+  labs(y = "Horizontal genome coverage")
+ggsave(file.path(fig_dir, "Figure5B_fraction_covered_fp.pdf"), f, width = 10, height = 5, useDingbats = F)
+
+
+testdata <- snps_summary %>%
+  filter(species_id != on_target_species)
+summary(aov(fraction_covered_sites ~  off_bin * on_bin + Error(on_target_species), data = testdata %>% filter(off_bin != "<77")))
+```
+
+
+## Figure S3: vertical coverage 
+
+```{r}
+f <- snps_summary %>%
+  filter(species_id != on_target_species) %>% #<-----
+  select(on_target_species, on_bin, off_bin, species_id, is_ontarget, fraction_covered_sites, mean_coverage) %>%
+  mutate(on_bin = gsub("ani.", "", on_bin)) %>%
+  mutate(off_bin = gsub("ani.", "", off_bin)) %>%
+  mutate(on_bin = factor(on_bin, levels = bt2_levels_on)) %>%
+  mutate(off_bin = factor(off_bin, levels = bt2_levels_off)) %>%
+  ggplot(aes(x = off_bin, y = mean_coverage, color = on_bin)) + 
+  geom_quasirandom(size = 1.2) +
+  scale_color_manual(values = manual_color, name = "Intra-species\nANI") + 
+  theme_bw() + 
+  scale_y_log10() +
+  labs(x = "Average nucleotide identity of closest relative in database (%)") + 
+  labs(y = "Vertical genome coverage (X)")
+ggsave(file.path(fig_dir, "FigureS3_vertical_coverage_fp.pdf"), f, width = 10, height = 5, useDingbats = F)
+
+
+testdata <- snps_summary %>%
+  filter(species_id != on_target_species)
+summary(aov(mean_coverage ~  off_bin * on_bin + Error(on_target_species), data = testdata %>% filter(off_bin != "<77")))
+```
+
+
+## Figure S4: Local Alignment 
+
+```{r}
+ontarget_reads_local <- read_delim(file.path(data_dir, "ontarget_reads_local.tsv"), delim = "\t", show_col_types = F)
+
+f <- ontarget_reads_local %>%
+  mutate(on_bin = gsub("ani.", "", on_bin)) %>%
+  mutate(off_bin = gsub("ani.", "", off_bin)) %>%
+  mutate(on_bin = factor(on_bin, levels = bt2_levels_on)) %>%
+  mutate(off_bin = factor(off_bin, levels = bt2_levels_off)) %>%
+  ggplot(aes(x = off_bin, y = cross_rate, color = on_bin)) + 
+  geom_quasirandom(size = 1) + 
+  theme_bw() + 
+  scale_color_manual(values = manual_color, name = "Intra-species\nANI") + 
+  scale_y_continuous(limits = c(0, 0.6), breaks = seq(0, 0.6, by =0.1), labels = scales::percent_format(fraction_covered_sites = 5L)) +
+  labs(x = "Average nucleotide identity of closest relative in database (%)") + 
+  labs(y = "Cross-mapping rate")
+ggsave(file.path(fig_dir, "FigureS4_cross_mapping_target_local.pdf"), f, width = 10, height = 5, useDingbats = F)
+```
+
+## Figure S5: BWA
+
+```{r}
+ontarget_reads <- read_delim(file.path(data_dir, "ontarget_reads_bwa.tsv"), delim = "\t", show_col_types = F)
+
+f <- ontarget_reads %>%
+  mutate(on_bin = gsub("ani.", "", on_bin)) %>%
+  mutate(off_bin = gsub("ani.", "", off_bin)) %>%
+  mutate(on_bin = factor(on_bin, levels = bt2_levels_on)) %>%
+  mutate(off_bin = factor(off_bin, levels = bt2_levels_off)) %>%
+  ggplot(aes(x = off_bin, y = cross_rate, color = on_bin)) + 
+  geom_quasirandom(size = 1) + 
+  theme_bw() + 
+  scale_color_manual(values = manual_color, name = "Intra-species\nANI") + 
+  scale_y_continuous(limits = c(0, 0.6), breaks = seq(0, 0.6, by =0.1), labels = scales::percent_format(fraction_covered_sites = 5L)) +
+  labs(x = "Average nucleotide identity of closest relative in database (%)") + 
+  labs(y = "Cross-mapping rate")
+  
+ggsave(file.path(fig_dir, "FigureS5_cross_mapping_target_bwa.pdf"), f, width = 10, height = 5, useDingbats = F)
+```
+
+# 86 NCBI strains
+
+## Figure 7A
+
+```{r}
+plot_data <- read_delim(file.path(data_dir, "plotdata_figure7A_alt.tsv"), delim = "\t", show_col_types = F)
+summary(aov(recall ~  intra_species_ani + between_species_ani + Error(accession), data = plot_data %>% filter(grepl("Paired", filter_type))))
+
+p1 <- plot_data %>%
+    ggplot(mapping = aes(x = filter_type, y = recall)) + 
+    geom_line(aes(group = interaction(accession)), color = "gray", lwd=0.2) + 
+    theme(legend.text=element_text(size=8)) + 
+    geom_quasirandom(data = plot_data %>% filter(color_by != "representative"), aes(color = between_species_ani), size = 1) +
+    scale_color_material("purple", reverse=F, name = "Between-\nspecies\nANI", limits = c(78, 95), breaks = c(seq(78, 89, 3), seq(90, 95, 1))) +
+    theme_bw() + 
+    scale_y_continuous(limits = c(0.3, 1), breaks = seq(0.3, 1, by =0.1)) + 
+    labs(y = "Recall", x = "") + 
+    guides(color = guide_colourbar(barwidth = 1, barheight =9)) + 
+    theme(legend.text=element_text(size=8)) + 
+    facet_grid(~sitetype) + 
+    theme(legend.position="none") 
+
+
+plot_data <- read_delim(file.path(data_dir, "plotdata_figure7A_ref.tsv"), delim = "\t", show_col_types = F)
+summary(aov(recall ~  intra_species_ani + between_species_ani + Error(accession), data = plot_data %>% filter(grepl("Paired", filter_type))))
+
+p2 <- plot_data %>%
+  ggplot(mapping = aes(x = filter_type, y = recall)) + 
+  geom_line(aes(group = interaction(accession)), color = "gray", lwd=0.2) + 
+  theme(legend.text=element_text(size=8)) + 
+  geom_quasirandom(data = plot_data %>% filter(color_by != "representative"), aes(color = between_species_ani), size = 1) +
+  scale_color_material("purple", reverse=F, name = "Average\nnucleotide\nidentity of\nclosest\nrelative\nin database\n(%)", limits = c(78, 95), breaks = c(seq(78, 89, 3), seq(90, 95, 1))) +
+  theme_bw() +
+  scale_y_continuous(limits = c(0.3, 1), breaks = seq(0.3, 1, by =0.1)) + 
+  labs(y = "", x = "") + 
+  guides(color = guide_colourbar(barwidth = 1, barheight =9)) + 
+  theme(legend.text=element_text(size=8)) + 
+  facet_grid(~sitetype) 
+
+
+library(cowplot)
+p3 <- cowplot::get_legend(p2)
+
+p2 <- p2 + theme(legend.position="none") 
+
+f5 <- grid.arrange(p1, p2, nrow = 1, layout_matrix = rbind(c(1, 2)))
+
+ggsave(file.path(fig_dir, "Figure7A_filters.pdf"), f5, width = 7, height = 4, useDingbats = F)
+ggsave(file.path(fig_dir, "Figure7A_filters_legend.pdf"), p3, width = 1, height = 4, useDingbats = F)
+```
+
+
+## Figure 7B
+
+```{r}
+plotdata <- read_delim(file.path(data_dir, "plotdata_fig7B_horizontal.tsv"), delim = "\t", show_col_types = F)
+
+plotdata %<>%
+  mutate(database_type = db_type) %>%
+  mutate(database_type = ifelse(db_type == "db_correct", "Customized\n(2 Species)", database_type)) %>%
+  mutate(database_type = ifelse(db_type == "db_strains", "Intermediate\n(162 Species)", database_type)) %>%
+  mutate(database_type = ifelse(db_type == "db_all", "Not Customized\n(4063 Species)", database_type)) %>%
+  mutate(database_type = factor(database_type, levels = c("Customized\n(2 Species)", "Intermediate\n(162 Species)", "Not Customized\n(4063 Species)")))
+
+
+f <- ggplot(mapping = aes(x = database_type, y = fraction_covered_sites, shape = shape_by)) + 
+  geom_line(data = plotdata, aes(group=interaction(accession, is_ontarget)), color = "gray", lwd=0.2) + 
+  geom_quasirandom(data = plotdata %>% filter(db_type == "db_correct"), aes(color = between_species_ani, shape = shape_by), size = 1) +
+  scale_color_material("purple", reverse=F, name = "ANI of closest\nrelative in\ndatabase(%)", limits = c(78, 95), breaks = c(seq(78, 89, 3), seq(90, 95, 2)), guide = "none") +
+  scale_shape_manual(values = c(1, 4, 15)) +
+  new_scale_color() +
+  geom_quasirandom(data = plotdata %>% filter(db_type != "db_correct") %>% filter(color_by == "TP" | color_by == "TN"), size = 1, color = "grey28") + 
+  geom_point(data = plotdata %>% filter(db_type != "db_correct") %>% filter(color_by == "FP" | color_by == "FN"), size = 1, aes(color = color_by2)) + #<-----------
+  scale_shape_manual(values = c(1, 4, 9), name="Species origin") +
+  scale_color_manual(values = pal_futurama()(9)[c(2,1)],name = "Incorrect species call") + 
+  theme_bw() +
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, by =0.2)) +
+  #theme(strip.text.x = element_blank(), legend.position=c(.3,.2)) +
+  geom_hline(yintercept = 0.4, linetype = "longdash") +
+  labs(x = "", y = "Horizontal genome coverage") +
+  theme(legend.position="bottom", legend.box="vertical", legend.margin=margin())
+
+f2_fp = file.path(fig_dir, "Figure7B_fig_exp3_closest_horizontal_addstrains.pdf")
+ggsave(f2_fp, f, width = 4.1, height = 5, useDingbats = F)
+```
+
+## Figure 7C
+
+```{r}
+full <- read_delim(file.path(data_dir, "plotdata_fig7C_recall.tsv"), delim = "\t", show_col_types = F)
+
+full %<>%
+  mutate(database_type = db_type) %>%
+  mutate(database_type = ifelse(db_type == "db_correct", "Customized\n(2 Species)", database_type)) %>%
+  mutate(database_type = ifelse(db_type == "db_strains", "Intermediate\n(162 Species)", database_type)) %>%
+  mutate(database_type = ifelse(db_type == "db_all", "Not Customized\n(4063 Species)", database_type)) %>%
+  mutate(database_type = factor(database_type, levels = c("Customized\n(2 Species)", "Intermediate\n(162 Species)", "Not Customized\n(4063 Species)")))
+
+full %<>%
+  mutate(sitetype = factor(sitetype, levels = c("ALT", "REF")))
+
+f <- ggplot(mapping = aes(x = database_type, y = recall)) + 
+  geom_boxplot(data = full, coef = 1000, color = "gray38") +
+  geom_line(data = full, color = "gray", aes(group = accession), lwd=0.2) +
+  geom_quasirandom(data = full %>% filter(db_type == "db_correct"), aes(color = between_species_ani), size = 1)  +
+  scale_color_material("purple", reverse=F, name = "ANI of closest\nrelative in\ndatabase(%)", limits = c(78, 95), breaks = c(seq(78, 89, 3), seq(90, 95, 2)), guide = "none") +
+  new_scale_color() +
+  geom_quasirandom(data = full %>% filter(db_type != "db_correct"), size = 1, color = "grey28") +
+  #scale_color_manual(values = pal_lancet()(9)[c(5,2)],name = "Incorrect\nspecies call") + 
+  theme_bw() +
+  scale_y_continuous(breaks = seq(0.3, 1, 0.1), limits = c(0.3, 1)) +
+  labs(x = "", y = "Recall") + 
+  facet_grid(sitetype ~.)
+
+f2_fp = file.path(fig_dir, "Figure7C_fig_exp3_closest_recall_addstrains.pdf")
+ggsave(f2_fp, f, width = 3.5, height = 6, useDingbats = F)
+```
+
+
+## Figure 4B & 4C
+
+```{r}
+plot_data <- read_delim(file.path(data_dir, "plotdata_figure4_reference_bias.tsv"), delim = "\t", show_col_types = F) %>%
+  mutate(sitetype = factor(sitetype, levels=c("REF", "ALT")))
+
+f11 <- ggplot(mapping = aes(x = sitetype, y = recall)) + 
+  geom_line(data = plot_data, aes(group = interaction(accession, color_by)), color = "gray", lwd=0.2) + 
+  geom_quasirandom(data = plot_data %>% filter(color_by == "representative"), aes(color = intra_species_ani), size = 1) + 
+  scale_color_material("pink", reverse=F, name = "Intra-\nspecies\nANI", limits = c(95, 100), breaks = seq(95, 100, 1)) +
+  labs(y = "Recall", x = "SNV allele") + 
+  theme_bw() +
+  theme(legend.text=element_text(size=8)) + 
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  guides(color = guide_colourbar(barwidth = 1, barheight =9)) + 
+  theme(legend.text=element_text(size=8))
+
+f11_fp = file.path(fig_dir, "Figure4B_reference_bias_recall.pdf")
+ggsave(f11_fp, f11, width = 4, height = 4, useDingbats = F)
+
+
+f11 <- ggplot(mapping = aes(x = sitetype, y = precision)) + 
+  geom_line(data = plot_data, aes(group = interaction(accession, color_by)), color = "gray", lwd=0.2) + 
+  geom_quasirandom(data = plot_data %>% filter(color_by == "representative"), aes(color = intra_species_ani), size = 1) + 
+  scale_color_material("pink", reverse=F, name = "Intra-\nspecies\nANI", limits = c(95, 100), breaks = seq(95, 100, 1)) +
+  labs(y = "Precision", x = "SNV allele") + 
+  theme_bw() +
+  theme(legend.text=element_text(size=8)) + 
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  guides(color = guide_colourbar(barwidth = 1, barheight =9)) + 
+  theme(legend.text=element_text(size=8))
+
+f11_fp = file.path(fig_dir, "Figure4C_reference_bias_precision.pdf")
+ggsave(f11_fp, f11, width = 4, height = 4, useDingbats = F)
+```
+
+
+# Figure S1
+
+```{r}
+
+specify_decimal <- function(x, k) as.numeric(trimws(format(round(x, k), nsmall=k)))
+manual_color = pal_lancet("lanonc", alpha = 1)(9)[c(2,3,4,5)]
+
+fig1_xs_cov_convergencel <- function(snps_summary, on_target_species, strain_name, accession, outdir) {
+  # Figure 1: supplemental file, show the coverage converge
+  on_reads <- snps_summary %>% 
+    filter(is_ontarget == "on-target") %>% 
+    select(bt2_bin, species_id, sim_cov, filter_type, percentage_piled_reads, relative_vertical_coverage, fraction_covered_sites)
+  
+  # We color by filter type
+  nshapes <- length(unique(on_reads$filter_type))
+  on_reads %<>%
+    gather(metric_type, val, percentage_piled_reads, fraction_covered_sites, relative_vertical_coverage) %>%
+    mutate(metric_type = ifelse(metric_type == "fraction_covered_sites", "Horizontal genome coverage", metric_type)) %>% 
+    mutate(metric_type = ifelse(metric_type == "percentage_piled_reads", "Precentage post-filter reads", metric_type)) %>%
+    mutate(metric_type = ifelse(metric_type == "relative_vertical_coverage", "Relative vertical genome coverage", metric_type)) %>%
+    mutate(sim_cov = as.numeric(sim_cov))
+  
+  my_levels <- gsub("95", "Rep", levels(on_reads$bt2_bin))
+  my_levels <- gsub("<77", "Random", my_levels)
+  on_reads %<>% mutate(bt2_bin = as.character(bt2_bin)) %>%
+    mutate(bt2_bin = ifelse(bt2_bin == "95", "Rep", bt2_bin)) %>%
+    mutate(bt2_bin = ifelse(bt2_bin == "<77", "Random", bt2_bin)) %>%
+    mutate(bt2_bin = factor(bt2_bin, levels = my_levels))
+  
+
+  fl <- on_reads %>%
+    filter(grepl("Horizontal", metric_type)) %>%
+    ggplot(aes(x = sim_cov, y = val, color = bt2_bin, group = interaction(filter_type, bt2_bin), shape = filter_type)) +
+    geom_jitter() + geom_line() + theme_bw() +
+    scale_shape_manual(values = seq(0:nshapes), name = "Filter Type") + 
+    scale_color_lancet(name = "ANI of closest\nrelative in\ndatabase (%)") + 
+    scale_y_continuous(limits = c(0, 0.8), breaks = seq(0, 0.8, by =0.1), labels = scales::percent_format(accuracy = 5L)) + 
+    labs(y = "Horizontal genome coverage", x = "Read coverage") + 
+    theme(legend.position="none")
+  
+  fm <- on_reads %>%
+    filter(grepl("Precentage", metric_type)) %>%
+    ggplot(aes(x = sim_cov, y = val, color = bt2_bin, group = interaction(filter_type, bt2_bin), shape = filter_type)) +
+    geom_jitter() + geom_line() + theme_bw() +
+    scale_shape_manual(values = seq(0:nshapes), name = "Filter Type") + 
+    scale_color_lancet(name = "ANI of closest\nrelative in\ndatabase (%)") + 
+    scale_y_continuous(limits = c(0.3, 0.8), breaks = seq(0.3, 0.8, by =0.1), labels = scales::percent_format(accuracy = 5L)) + 
+    labs(y = "Precentage post-filter reads", x = "Read coverage") + 
+    theme(legend.position="none") 
+  
+  fr <- on_reads %>%
+    filter(grepl("Relative", metric_type)) %>%
+    ggplot(aes(x = sim_cov, y = val, color = bt2_bin, group = interaction(filter_type, bt2_bin), shape = filter_type)) +
+    geom_jitter() + geom_line() + theme_bw() +
+    scale_color_lancet(name = "ANI of closest\nrelative in\ndatabase (%)") + 
+    scale_shape_manual(values = seq(0:nshapes), name = "Filter Type") + 
+    scale_y_continuous(limits = c(0, 5), breaks = seq(0, 5, by =0.5)) + 
+    labs(y = "Relative vertical genome coverage", x = "Read coverage")
+  
+  ll <- cowplot::get_legend(fr)
+  f1_fp <- file.path(fig_dir, paste("FigureS1A_xscov_TP_", accession,"_legend.pdf", sep=""))
+  ggsave(f1_fp, ll, width = 1, height = 3.5, useDingbats = F)
+  
+  fr <- fr + theme(legend.position="none")
+  f1_fp <- file.path(fig_dir, paste("FigureS1A_xscov_TP_", accession,".pdf", sep=""))
+  f <- grid.arrange(fl, fm, fr, layout_matrix = rbind(c(1,2,3)), nrow = 1, left = "On-target")
+  ggsave(f1_fp, f, width = 9, height = 3, useDingbats = F)
+
+  
+  off_reads <- snps_summary %>% 
+    filter(is_ontarget == "off-target") %>%
+    select(bt2_bin, species_id, sim_cov, filter_type, percentage_piled_reads, relative_vertical_coverage, fraction_covered_sites) 
+  
+  off_reads %<>%
+    gather(metric_type, val, percentage_piled_reads, fraction_covered_sites, relative_vertical_coverage) %>%
+    mutate(metric_type = ifelse(metric_type == "fraction_covered_sites", "Horizontal genome coverage", metric_type)) %>%
+    mutate(metric_type = ifelse(metric_type == "percentage_piled_reads", "Precentage post-filter reads", metric_type)) %>%
+    mutate(metric_type = ifelse(metric_type == "relative_vertical_coverage", "Relative vertical genome coverage", metric_type)) %>%
+    mutate(sim_cov = as.numeric(sim_cov))
+  
+
+  fl <- off_reads %>%
+    filter(grepl("Horizontal", metric_type)) %>%
+    ggplot(aes(x = sim_cov, y = val, color = bt2_bin, group = interaction(filter_type, bt2_bin), shape = filter_type)) +
+    geom_jitter() + geom_line() + theme_bw() +
+    scale_shape_manual(values = seq(0:nshapes), name = "Filter Type") + 
+    scale_color_manual(values = manual_color, name = "ANI of closest\nrelative in\ndatabase (%)") + 
+    scale_y_continuous(limits = c(0, 0.5), breaks = seq(0, 0.5, by =0.1), labels = scales::percent_format(accuracy = 5L)) + 
+    labs(y = "Horizontal genome coverage", x = "Read coverage") + 
+    theme(legend.position="none")
+  
+  fm <- off_reads %>%
+    filter(grepl("Precentage", metric_type)) %>%
+    ggplot(aes(x = sim_cov, y = val, color = bt2_bin, group = interaction(filter_type, bt2_bin), shape = filter_type)) +
+    geom_jitter() + geom_line() + theme_bw() +
+    scale_shape_manual(values = seq(0:nshapes), name = "Filter Type") + 
+    scale_color_manual(values = manual_color, name = "ANI of closest\nrelative in\ndatabase (%)") + 
+    scale_y_continuous(limits = c(0, 0.3), breaks = seq(0, 0.3, by =0.1), labels = scales::percent_format(accuracy = 5L)) + 
+    labs(y = "Precentage post-filter reads (FP read)", x = "Read coverage") + 
+    theme(legend.position="none") 
+  
+  fr <- off_reads %>%
+    filter(grepl("Relative", metric_type)) %>%
+    ggplot(aes(x = sim_cov, y = val, color = bt2_bin, group = interaction(filter_type, bt2_bin), shape = filter_type)) +
+    geom_jitter() + geom_line() + theme_bw() +
+    scale_color_manual(values = manual_color, name = "ANI of closest\nrelative in\ndatabase (%)", guide = "none") + 
+    scale_shape_manual(values = seq(0:nshapes), name = "Filter Type", guide = "none") + 
+    scale_y_continuous(limits = c(0, 5), breaks = seq(0, 5, by = 0.5)) + 
+    labs(y = "Relative vertical genome coverage", x = "Read coverage")
+  
+  
+  ll <- cowplot::get_legend(fr)
+  fr <- fr + theme(legend.position="none")
+  
+  f1_fp <- file.path(fig_dir, paste("FigureS1B_xscov_FP_", accession,".pdf", sep=""))
+  f <- grid.arrange(fl, fm, fr, layout_matrix = rbind(c(1,2,3)), nrow = 1, left = "Off-target")
+  ggsave(f1_fp, f, width = 9, height = 3, useDingbats = F)
+  
+}
+
+
+
+fig3_sites_convergence <- function(sites_summary, on_target_species, f3_fp, bt2_levels, accession, outdir) {
+  
+  ## Start with showing the detection power increase and converge 
+  nshapes <- nlevels(sites_summary$bt2_bin)
+  plot_data <- sites_summary %>%
+    gather(sites_label, sites_count, correct_sites, incorrect_sites) %>% #<------------- sites_aligned: the trend is similar to correct_sites, 
+    mutate(sites_percentage = sites_count / total_sites)
+  
+  plot_data %<>%
+    mutate(sitetype = ifelse(sitetype == "ref", "REF", "ALT")) %>%
+    mutate(sites_label = ifelse(sites_label == "correct_sites", "TP", "FP"))
+  
+  
+  my_levels <- gsub("95", "Rep", levels(plot_data$bt2_bin))
+  my_levels <- gsub("<77", "Random", my_levels)
+  plot_data %<>% 
+    mutate(bt2_bin = as.character(bt2_bin)) %>%
+    mutate(bt2_bin = ifelse(bt2_bin == "95", "Rep", bt2_bin)) %>%
+    mutate(bt2_bin = ifelse(bt2_bin == "<77", "Random", bt2_bin)) %>%
+    mutate(bt2_bin = factor(bt2_bin, levels = my_levels))
+  
+  
+  ft <- plot_data %>%
+    filter(grepl("TP", sites_label)) %>%
+    ggplot(aes(x = sim_cov, y = sites_percentage, color = filter_type, shape = bt2_bin, group = interaction(bt2_bin, filter_type))) +
+    geom_point() +
+    geom_line() +
+    theme_bw() +
+    facet_grid(~sitetype) +
+    scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, by =0.1)) + 
+    scale_color_futurama(name = "Filter type") +
+    scale_shape_manual(values = seq(0:nshapes), name = "ANI of closest\nrelative in\ndatabase (%)") +
+    theme(plot.title = element_text(hjust = 0.5)) +
+    labs(y = "Precision", x = "Read coverage") + 
+    theme(legend.position="none")
+  
+  fb <- plot_data %>%
+    filter(grepl("FP", sites_label)) %>%
+    ggplot(aes(x = sim_cov, y = sites_percentage, color = filter_type, shape = bt2_bin, group = interaction(bt2_bin, filter_type))) +
+    geom_point() +
+    geom_line() +
+    theme_bw() +
+    facet_grid(~sitetype) +
+    scale_y_continuous(limits = c(0, 0.004), breaks = seq(0, 0.004, by =0.0005)) +
+    scale_color_futurama(name = "Filter type") +
+    scale_shape_manual(values = seq(0:nshapes), name = "ANI of closest\nrelative in\ndatabase (%)") +
+    theme(plot.title = element_text(hjust = 0.5)) +
+    labs(y = "Type I Error", x = "Read coverage")
+  
+  ll <- cowplot::get_legend(fb)
+  f3_fp <- file.path(fig_dir, paste("FigureS1C_sites_xscov_TP_", accession, "_legend.pdf", sep=""))
+  ggsave(f3_fp, ll, width = 1, height = 3, useDingbats = F)
+  
+  fb <- fb + theme(legend.position="none")
+  
+  f3_fp <- file.path(fig_dir, paste("FigureS1C_sites_xscov_TP_", accession, ".pdf", sep=""))
+  f <- grid.arrange(ft, fb, nrow = 1) 
+  ggsave(f3_fp, f, width = 9, height = 3, useDingbats = F)
+  
+}
+
+
+
+parse_snps_summary <- function(fp, rp, bt2_levels, self_ani) {
+  
+  snps_summary <- read_delim(fp, delim = "\t", show_col_types = F)
+  
+  snps_summary %<>%
+    mutate(species_id = as.character(species_id)) %>%
+    select(sim_cov, bt2_bin, filter_type, everything()) %>%
+    ############### newly added 
+    mutate(bt2_bin = ifelse(grepl("100", bt2_bin), paste("ani.", self_ani, sep=""), bt2_bin)) %>%
+    mutate(bt2_bin = ifelse(grepl(random_bin_int, bt2_bin), "ani.<77", bt2_bin)) %>%
+    mutate(bt2_bin = gsub("ani.", "", bt2_bin)) %>%
+    mutate(bt2_bin = factor(bt2_bin, levels = bt2_levels)) %>%
+    mutate(is_ontarget = ifelse(species_id == on_target_species, "on-target", "off-target"))
+  
+  sim_rc <- read_delim(rp, delim = "\t", col_names = c("sim_cov", "read_counts"), show_col_types = F) %>%
+    mutate(read_counts = read_counts * 2)
+  
+  ## 2022-01-06: The genome length reported by the SNPs is for the template genome, not the simulate genome!! 
+  snps_summary %<>%
+    left_join(sim_rc, by=c("sim_cov")) %>%
+    mutate(percentage_aligned_reads = specify_decimal(aligned_reads / read_counts, 3)) %>%
+    mutate(percentage_piled_reads = specify_decimal(mapped_reads / read_counts, 3)) %>%
+    select(-read_counts)
+  
+  snps_summary %<>%
+    mutate(filter_type = ifelse(filter_type == "nofilter", "No filter", filter_type)) %>%
+    mutate(filter_type = ifelse(filter_type == "paired", "Paired", filter_type)) %>% 
+    mutate(filter_type = ifelse(filter_type == "single", "Single", filter_type)) 
+  
+  snps_summary
+}
+
+
+parse_sites_summary <- function(fp, bt2_levels) {
+  xs_sites <- read_delim(fp, delim = "\t", col_types = cols()) %>%
+    group_by(sim_cov, filter_type, bt2_bin, sitetype) %>%
+    summarise(total_sites = sum(sites_total), uncalled_sites = sum(sites_uncalled), 
+              correct_sites = sum(sites_correct), incorrect_sites = sum(sites_incorrect)) %>%
+    ungroup() %>%
+    mutate(sim_cov = as.numeric(sim_cov)) %>%
+    mutate(bt2_bin = ifelse(grepl("100", bt2_bin), paste("ani.", self_ani, sep=""), bt2_bin)) %>%
+    mutate(bt2_bin = ifelse(grepl(random_bin_int, bt2_bin), "ani.<77", bt2_bin)) %>%
+    mutate(bt2_bin = gsub("ani.", "", bt2_bin)) %>%
+    mutate(bt2_bin = factor(bt2_bin, levels = bt2_levels)) %>%
+    mutate(sites_unaligned = total_sites - uncalled_sites - correct_sites - incorrect_sites) %>%
+    mutate(sites_aligned = total_sites - sites_unaligned) %>%
+    filter(sitetype != "mism") %>%
+    mutate(called_among_aligned = specify_decimal(correct_sites / sites_aligned, 4)) %>%
+    mutate(tp_over_p = specify_decimal(correct_sites / total_sites, 4))
+  
+  
+  xs_sites %<>%
+    mutate(filter_type = ifelse(filter_type == "nofilter", "No filter", filter_type)) %>%
+    mutate(filter_type = ifelse(filter_type == "paired", "Paired", filter_type)) %>% 
+    mutate(filter_type = ifelse(filter_type == "single", "Single", filter_type)) 
+}
+
+```
+
+```{r}
+acc = "GCF_000173795.1"
+datadir <- file.path(data_dir, acc)
+
+self_ani = 95
+strain_name = "Catenibacterium-mitsuokai-DSM-15897"
+
+ani_bins <- read_delim(file.path(datadir, "curr_fastani.tsv"), delim = "\t", show_col_types = F) %>%
+  mutate(ani_bin = paste("ani.", ani_int, sep="")) %>%
+  mutate(species_id = as.character(species_id)) %>%
+  mutate(on_target_species = as.character(on_target_species)) %>%
+  mutate(ani_bin = ifelse(ani_int == min(ani_int), "ani.<77", ani_bin)) %>%
+  mutate(ani_bin = ifelse(ani_int == max(ani_int), paste("ani", floor(ani), sep="."), ani_bin)) %>%
+  mutate(ani_bin = gsub("ani.", "", ani_bin)) %>%
+  mutate(ani_bin = as.factor(ani_bin)) %>%
+  mutate(ani_bin = fct_reorder(ani_bin, ani_int, .desc=TRUE)) %>%
+  select(ani_bin, on_target_species, species_id, ani_int)
+
+on_target_species <- unique(ani_bins$on_target_species)
+
+list_of_ani_bins <- unique(ani_bins$ani_int)
+random_bin_int <- min(list_of_ani_bins)
+
+bt2_levels <- gsub("ani.", "", levels(ani_bins$ani_bin))
+bt2_levels_off <- setdiff(bt2_levels, self_ani)
+
+curr_anibin <- ani_bins %>% select(ani_bin, on_target_species, species_id) %>% 
+  dplyr::rename(confounding_species = species_id)
+
+
+##################### Reads Level
+fp <- file.path(datadir, "7_rdata", "exp1_reads_summary.tsv")
+rp <-  file.path(data_dir, "sim_reads", acc, "sim_rc.tsv")
+
+snps_summary <- parse_snps_summary(fp, rp, bt2_levels, self_ani)
+fig1_xs_cov_convergencel(snps_summary, on_target_species, strain_name, acc, outdir)
+
+
+##################### Sites Level
+fp <- file.path(datadir, "7_rdata", "exp1_sites_summary.tsv")
+sites_summary <- parse_sites_summary(fp, bt2_levels)
+
+true_sites <- read_delim(file.path(datadir, "4_truesites", "sim_rep_true_sites.tsv"), delim = "\t", show_col_types = F) 
+true_sites %<>% 
+  filter(sitetype != "mism") %>% select(refid, pos1, refallele, altallele, sitetype) %>%
+  dplyr::rename(ref_id = refid, ref_pos = pos1, ref_allele = refallele, alt_allele = altallele, site_type = sitetype)
+
+f3_fp <- file.path(fig_dir, paste("Figure3C_sites_", acc, ".pdf", sep=""))
+fig3_sites_convergence(sites_summary, on_target_species, f3_fp,  bt2_levels, acc, fig_dir)
+```
+ 
+# Figure S7 Runtime
+
+```{r}
+plotdata <- read_delim(file.path(data_dir, "gnutime.tsv"), delim = "\t", show_col_types = F)
+
+plotdata %<>%
+  mutate(database_type = dbtype) %>%
+  mutate(database_type = ifelse(dbtype == "db_correct", "Customized\n(2 Species)", database_type)) %>%
+  mutate(database_type = ifelse(dbtype == "db_strains", "Intermediate\n(162 Species)", database_type)) %>%
+  mutate(database_type = ifelse(dbtype == "db_all", "Not Customized\n(4063 Species)", database_type)) %>%
+  mutate(database_type = factor(database_type, levels = c("Customized\n(2 Species)", "Intermediate\n(162 Species)", "Not Customized\n(4063 Species)")))
+
+f1 <- plotdata %>%
+  ggplot(aes(x = database_type, y = Elapsed, color = total_readcounts)) + 
+  geom_quasirandom() +
+  theme_bw() + 
+  #guides(color="none") + 
+  scale_color_material(palette = "purple", na.value = "grey", reverse = F, name = "Read counts\n(Millions)") + 
+  labs(x = "", y = "Run time (seconds)")
+
+figfile <- "fig.20220830_Runtime.pdf"
+ggsave(file.path(fig_dir, "FigureS7_gnutime.pdf"), f1, useDingbats=TRUE, width = 6, height = 4)
+```
+
