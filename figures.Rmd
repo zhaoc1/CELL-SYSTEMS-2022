@@ -963,3 +963,152 @@ figfile <- "fig.20220830_Runtime.pdf"
 ggsave(file.path(fig_dir, "FigureS7_gnutime.pdf"), f1, useDingbats=TRUE, width = 6, height = 4)
 ```
 
+# Figure 3
+
+```{r}
+library(ggplot2)
+library(gridExtra)
+library(viridis)
+library(ggpubr)
+library(RColorBrewer)
+library(ggbeeswarm)
+library(metacoder)
+
+n_spec_by_year_ncbi = read.table(file.path(data_dir,"figure3/all_bact_arch_assembly_ncbi_n_species_by_year.tsv"), sep='\t', header=TRUE)
+
+panel_a=ggplot(n_spec_by_year_ncbi, aes(x=year, y=n_species, fill=year)) +
+  geom_bar(stat="identity", position="dodge", color="black", width = 0.6) +
+  theme(legend.position = "none") + 
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), 
+        panel.border = element_rect(colour = "black", fill=NA, size=1),
+        panel.grid.major.y = element_line(colour="grey75", size=0.2, linetype="dashed"),
+        axis.title.x = element_blank(),
+        panel.background = element_blank(), axis.line = element_line(colour = "black")) +
+  ylab("No. of species") +
+  scale_y_continuous(labels = function(x) format(x, scientific = TRUE))
+
+
+n_genome_by_species_multi = read.table(file.path(data_dir, "figure3/multi_source_n_genome_by_species.tsv"), sep='\t', header=TRUE)
+n_genome_by_species_multi$fill_order = 1:31985
+  
+panel_b=ggplot(n_genome_by_species_multi, aes(x=source, fill=source, fill=source)) +
+  geom_bar(stat="count", position="dodge", width=0.7, color="black") +
+  scale_fill_manual(values=c("darkorange2", "darkorange2",  "darkorange2")) +
+  theme(legend.position = "none") + 
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), 
+        panel.border = element_rect(colour = "black", fill=NA, size=1),
+        panel.grid.major.y = element_line(colour="grey75", size=0.2, linetype="dashed"),
+        axis.title.x = element_blank(),
+        panel.background = element_blank(), axis.line = element_line(colour = "black")) +
+  ylab("No. of species") +
+  scale_y_continuous(breaks=round(seq(0, 20000, by = 10000),1), labels = function(x) format(x, scientific = TRUE))
+  
+  
+panel_c=ggplot(n_genome_by_species_multi[n_genome_by_species_multi$n_genome>=100,], aes(x=source, y=n_genome, fill=source, color=source)) +
+  geom_beeswarm(cex=1.5) +
+  scale_color_manual(values=c("darkorange2", "darkorange2", "darkorange2")) +
+  scale_fill_manual(values=c("darkorange2", "darkorange2",  "darkorange2")) +
+  theme(
+    panel.border = element_rect(colour = "black", fill=NA, size=1),
+    legend.position="none",
+    panel.grid.major.y = element_line(colour="grey75", size=0.2, linetype="dashed"),
+    panel.background = element_blank(), axis.line = element_line(colour = "black")) +
+  ylab("No. of genomes") +
+  xlab("Data source") + scale_y_continuous(trans="log10")
+
+
+intra_dist_data1 = read.table(file.path(data_dir, "figure3/RS_GCF_000392875.1.fastANI.tsv"), sep='\t', header=TRUE)
+
+panel_d=ggplot(intra_dist_data1, aes(x=ani, color="black")) +
+  geom_density(alpha=0.6, color="black", fill="#1B9E77") +
+  scale_fill_manual(values=c("#1B9E77", "#AD4C9E")) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), 
+        panel.border = element_rect(colour = "black", fill=NA, size=1), legend.position = "None",
+        panel.background = element_blank(), axis.line = element_line(colour = "black")) +
+  scale_x_continuous(limits = c(95, 100), expand = c(0, 0.2)) +
+  ylab("Frequency") +
+  xlab("ANI (%)") 
+
+intra_dist_data2 = read.table(file.path(data_dir, "figure3/RS_GCF_001729745.1.fastANI.tsv"), sep='\t', header=TRUE)
+panel_e=ggplot(intra_dist_data2, aes(x=ani, color="black")) +
+  geom_density(alpha=0.6, color="black", fill="#AD4C9E") +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), 
+        panel.border = element_rect(colour = "black", fill=NA, size=1), legend.position = "None",
+        panel.background = element_blank(), axis.line = element_line(colour = "black")) +
+  scale_x_continuous(limits = c(95, 100), expand = c(0, 0.2)) +
+  ylab("Frequency") +
+  xlab("ANI (%)") 
+  
+
+aligned_data1 = read.table(file.path(data_dir, "figure3/RS_GCF_000392875.1.ANI_alignrate.tsv"), sep='\t', header=TRUE)
+panel_g=ggplot(aligned_data1, aes(x="GCF_000392875.1", y=align_rate/100, fill=ani, color=ani)) +
+  geom_beeswarm(cex=4) +
+  scale_color_gradient2(low="seagreen1", mid="seagreen3", high="darkgreen", midpoint = 98.3968) +
+  theme(
+    panel.border = element_rect(colour = "black", fill=NA, size=1),
+    legend.position="none",
+    axis.text.x=element_blank(),
+    panel.grid.major.y = element_line(colour="grey75", size=0.2, linetype="dashed"),
+    panel.background = element_blank(), axis.line = element_line(colour = "black")) +
+  ylab("Alignment rate") +
+  xlab("Enterococcus faecalis") + scale_y_continuous(limits = c(0.7, 1))
+  
+aligned_data2 = read.table(file.path(data_dir,"figure3/RS_GCF_001729745.1.ANI_alignrate.tsv"), sep='\t', header=TRUE)
+panel_h=ggplot(aligned_data2, aes(x="GCF_001729745.1", y=align_rate/100, fill=ani, color=ani)) +
+  geom_beeswarm(cex=4) +
+  scale_color_gradient2(low="plum2", mid="mediumpurple1", high="darkslateblue", midpoint = 95.89945) +
+  theme(
+    panel.border = element_rect(colour = "black", fill=NA, size=1),
+    legend.position="none",
+    axis.text.x=element_blank(),
+    panel.grid.major.y = element_line(colour="grey75", size=0.2, linetype="dashed"),
+    panel.background = element_blank(), axis.line = element_line(colour = "black")) +
+  ylab("Alignment rate") + 
+  xlab("Enterobacter hormaechei_A") + scale_y_continuous(limits = c(0.7, 1))
+
+mdplt_comb1 = ggarrange(panel_a, panel_b, widths=c(6, 2), nrow = 1)
+mdplt_comb2 = ggarrange(panel_d, panel_e, widths=c(1, 1), nrow = 1)
+mdplt_comb3 = ggarrange(panel_g, panel_h, widths=c(1, 1), nrow = 1)
+
+mdplt_comb =  ggarrange(mdplt_comb1, panel_c, mdplt_comb2, mdplt_comb3, heights=c(0.75, 0.75, 0.5, 1), ncol = 1)
+
+ggsave(file.path(fig_dir, "Figure3.pdf"), mdplt_comb, device = "pdf", 
+       path = "./",
+       width = 8, height = 11,
+       scale = 1, dpi = 800
+)
+
+
+gtdb_reps = read.table(file.path(data_dir, "figure3/GTDB_rep_hq_min_dist2neighbor_wt_annotation.tsv"), sep='\t', header=TRUE)
+gtdb_reps$sim2neighbor = 1 - gtdb_reps$dist2neighbor
+gtdb_reps$sim2neighbor_bin = gtdb_reps$sim2neighbor
+gtdb_reps$sim2neighbor_bin[gtdb_reps$sim2neighbor_bin >= 0.92] = 1
+gtdb_reps$sim2neighbor_bin[gtdb_reps$sim2neighbor_bin < 0.92] = 0
+gtdb_reps$lineage2g = unlist(lapply(strsplit(gtdb_reps$lineage, split=';'), function(x){paste(x[1:6], collapse=";")}))
+gtdb_reps$lineage2f = unlist(lapply(strsplit(gtdb_reps$lineage, split=';'), function(x){paste(x[1:5], collapse=";")}))
+gtdb_reps$lineage2o = unlist(lapply(strsplit(gtdb_reps$lineage, split=';'), function(x){paste(x[1:4], collapse=";")}))
+
+
+obj <- parse_tax_data(gtdb_reps,
+                      class_cols = "lineage2f", # the column that contains taxonomic information
+                      class_sep = ";", # The character used to separate taxa in the classification
+                      class_regex = "^(.+)__(.+)$", # Regex identifying where the data for each taxon is
+                      class_key = c(tax_rank = "info", # A key describing each regex capture group
+                                    tax_name = "taxon_name"))
+
+obj$data$tax_abund <- calc_taxon_abund(obj, "tax_data", cols = c("sim2neighbor_bin"), out_names = "sim2neighbor_bin_ab")
+obj$data$tax_abund$sim2neighbor_bin_ac = obj$data$tax_abund$sim2neighbor_bin_ab + 1
+
+heat_tree(obj, 
+          node_label = taxon_names,
+          node_size = n_obs,
+          node_color = sim2neighbor_bin_ac, 
+          node_size_trans = "area",
+          node_color_trans = "log10",
+          node_label_size_trans = "area",
+          node_size_axis_label = "Species count",
+          node_color_axis_label = "No. of species with CRS",
+          layout = "davidson-harel", # The primary layout algorithm
+          initial_layout = "reingold-tilford") # The layout algorithm that initializes node locations
+```
+
